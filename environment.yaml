@@ -1,0 +1,9 @@
+name: mixson
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - ffmpeg          # provides ffmpeg + ffprobe
+  - pip
+  - pip:
+      - pygame>=2.5

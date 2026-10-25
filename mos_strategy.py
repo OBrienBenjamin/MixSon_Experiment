@@ -125,8 +125,8 @@ class Experiment:
         self.rng = random.Random(seed)
         RESULTS_DIR.mkdir(exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.out_path = RESULTS_DIR / f"mos_manip1_{participant}_{stamp}.csv"
-        self.design_path = RESULTS_DIR / f"mos_manip1_{participant}_{stamp}_design.csv"
+        self.out_path = RESULTS_DIR / f"mos_strategy_{participant}_{stamp}.csv"
+        self.design_path = RESULTS_DIR / f"mos_strategy_{participant}_{stamp}_design.csv"
 
         self.plan = self._make_plan()
         self._write_design()

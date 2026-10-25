@@ -27,7 +27,7 @@ BLOCKS = {                       # block name -> (folder, mode)
     "Static": ("Static",    "both"),
     "FM": ("FM",    "both"),
 }
-N_REPS = 1
+N_REPS = 5
 CLIPS_PER_BLOCK = 8
 ITI_MS = 500
 EXTENSIONS = {".mp4", ".mov", ".wav"}

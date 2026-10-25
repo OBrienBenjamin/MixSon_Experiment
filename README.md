@@ -39,44 +39,34 @@ python -c "import pygame; print(pygame.version.ver)"
 
 ## Stimuli
 
-The stimulus files are not stored in this repository (about 1.2 GB).
-
-1. Download `mixson_stimuli.zip` from: <PASTE GOOGLE DRIVE LINK>
-2. Unzip it in the repository root so the folder structure is:
-
-```
-media/MOS/Modality/{AV,Audio,Video}/
-media/MOS/Strategy/{EVENT,FM,STATIC}/
-```
-
-Check with: `ls media/MOS`
-
+The stimulus files are not stored in this repository (about 1.2 GB) and will be provided by the author to engineer. The 'media.zip' file should be unziped and included in the main folder 'MixSon_Experiment'
 
 ## Run
 
+cd to the MixSon_Experiment directory. To run the 'Modality' Experiment type the following
+
 ```bash
-python scripts/manip.py --participant P01
+python manip.py --participant P01
 ```
 
-Options: `--seed 123` (reproducible order).
-Press SPACE to start/continue, keys 1–5 to rate, ESC to quit
-(the interrupted trial is logged as `aborted`).
+To run the 'Strategy' Experiment type the following
+
+```bash
+python manip.py --participant P01
+```
+
+Please replace P01 with the up-to-date participant identifier
 
 ## Output
 
-Written to `results/` (not tracked by git):
+Written to `Responses/MOS/` (not tracked by git):
 
-- `results_<participant>_<timestamp>.csv`: one row per trial
+- `mos_<experiment_type>_<participant>_<timestamp>.csv`: one row per trial
   (participant, block, stimulus, repetition, response, status, block position,
   trial numbers, reaction time after playback, timestamp)
-- `results_<participant>_<timestamp>_design.csv`: the planned trial order
+- `mos_<experiment_type>_<participant>_<timestamp>_design.csv`: the planned trial order
 
 Each response is flushed to disk immediately, so data survive crashes.
-
-## Configuration
-
-Edit the constants at the top of `scripts/manip.py`: number of repetitions, question
-text and scale labels, render size (`CANVAS`), audio sample rate (`MIXER_FREQ`).
 
 ## Troubleshooting
 

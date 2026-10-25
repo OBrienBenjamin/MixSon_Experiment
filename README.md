@@ -1,7 +1,7 @@
 # MixSon: audio-visual MOS rating experiment
 
-Runs a Mean Opinion Score (1–5) experiment with three blocks of 8 clips each
-(audio-only, video-only, audiovisual). Block order is randomized per participant.
+Runs a Mean Opinion Score (1–5) experiment with three blocks of 8 clips. Two experiments are included which test the effects of modality
+(audio-only, video-only, audiovisual) and sonification strategy (event, static, fm). Block order is randomized per participant.
 Within a block the 8 clips are shuffled and the full set is repeated 5 times
 (a clip repeats only after all 8 have been shown). Each clip plays automatically,
 then the participant rates it with keys 1–5. Everything runs in one fullscreen window.

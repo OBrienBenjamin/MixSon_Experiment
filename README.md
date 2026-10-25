@@ -4,7 +4,7 @@ Two Mean Opinion Score (1-5) rating experiments for audio-visual synchronization
 with sonification:
 
 - `mos_modality.py`: audio-only, video-only and audiovisual clips
-- `mos_strategy.py`: <short description, e.g. EVENT / FM / STATIC sonification strategies>
+- `mos_strategy.py`: sonification strategy {EVENT, STATIC, FM}
 
 Each clip plays automatically, then the participant rates it with keys 1-5.
 Everything runs in a single fullscreen window, and every response is written to

@@ -1,4 +1,4 @@
-# MixSon: audio-visual MOS rating experiment
+# MixSon: MOS perceptual experiment
 
 Runs a Mean Opinion Score (1–5) experiment with three blocks of 8 clips. Two experiments are included which test the effects of modality
 (audio-only, video-only, audiovisual) and sonification strategy (event, static, fm). Block order is randomized per participant.

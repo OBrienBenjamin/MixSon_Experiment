@@ -25,8 +25,8 @@ disk immediately, so data are safe even if a session is interrupted.
 | Requirement | Version | Notes |
 |---|---|---|
 | Python | 3.12 | |
-| pygame | <PINNED VERSION, e.g. 2.6.1> | installed via conda or pip |
-| ffmpeg + ffprobe | <VERSION> | must be on your PATH |
+| pygame | 2.6.1 | installed via conda or pip |
+| ffmpeg + ffprobe | | must be on your PATH |
 
 All other imports (`argparse`, `csv`, `queue`, `subprocess`, `threading`, `wave`, etc.)
 are part of Python's standard library and need no installation.
@@ -36,46 +36,20 @@ session before collecting real data.
 
 ## Installation
 
-### Option 1 (recommended): conda
-
 This installs Python, ffmpeg, ffprobe and pygame in one step.
 
 1. Install **Miniconda** (from the Anaconda/Miniconda website) if you don't have conda.
 2. Get the code:
    ```bash
-   git clone https://github.com/<user>/<repo>.git
-   cd <repo>
+   git clone https://github.com/OBrienBenjamin/MixSon_Experiment.git
+   cd MixSon_Experiment
    ```
-   (or use "Code -> Download ZIP" on GitHub and open a terminal in the unzipped folder)
+
 3. Create and activate the environment:
    ```bash
    conda env create -f environment.yaml
    conda activate mixson
    ```
-
-### Option 2: setup script
-
-From the repo folder:
-
-```bash
-bash setup.sh        # macOS / Linux
-setup.bat            # Windows
-```
-
-These use conda if it is available, otherwise they create a `.venv` and install
-`requirements.txt`. In the venv case **ffmpeg must be installed separately**
-(see below).
-
-### Option 3: pip only
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-Then install ffmpeg yourself and make sure both `ffmpeg` and `ffprobe` run from a terminal
-(download from ffmpeg.org, or use a package manager).
 
 ### Check the installation
 

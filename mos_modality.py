@@ -18,17 +18,19 @@ except ImportError:
     raise SystemExit("Missing package: pygame. Install with:\n  pip install pygame")
 
 # ---------------- configuration ----------------
-MEDIA_ROOT = Path(os.path.join("media","MOS","Modality"))
-RESULTS_DIR = Path(os.path.join("Responses","MOS","Modality"))
+MEDIA_ROOT = Path(os.path.join("media", "MOS", "Modality"))
+TRAIN_ROOT = Path(os.path.join(MEDIA_ROOT, "Train"))      # Train/Audio, Train/Video, Train/AV
+RESULTS_DIR = Path(os.path.join("Responses", "MOS", "Modality"))
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-BLOCKS = {                       # block name -> (folder, mode)
+BLOCKS = {                       # block name -> (folder, mode); same folder names in MEDIA_ROOT and TRAIN_ROOT
     "Audio":       ("Audio", "audio"),
     "Video":       ("Video", "video"),
     "Audiovisual": ("AV",    "both"),
 }
-N_REPS = 5
+N_REPS = 1
 CLIPS_PER_BLOCK = 8
+N_PRACTICE = 2                   # practice clips shown before each block (played in sorted filename order)
 ITI_MS = 500
 EXTENSIONS = {".mp4", ".mov", ".wav"}
 
@@ -42,13 +44,25 @@ MIXER_BUFFER = 512               # smaller = lower audio latency
 QUESTION = "How would you rate the quality of what you just experienced?"
 SCALE_LABELS = {1: "Bad", 2: "Poor", 3: "Fair", 4: "Good", 5: "Excellent"}
 
-RESULT_COLUMNS = ["participant", "block", "stimulus", "repetition", "response",
+RESULT_COLUMNS = ["participant", "block", "phase", "stimulus", "repetition", "response",
                   "status", "block_order_pos", "trial_in_block", "trial_global",
                   "rt_after_playback_s", "timestamp"]
+DESIGN_COLUMNS = ["participant", "block_order_pos", "block", "phase",
+                  "trial_in_block", "repetition", "stimulus"]
 # ------------------------------------------------
 
 class Abort(Exception):
     pass
+
+def list_media(folder, expected):
+    """Sorted media files in folder; exits with a clear message if missing or wrong count."""
+    if not folder.is_dir():
+        raise SystemExit(f"Folder not found: {folder}")
+    files = sorted(p for p in folder.iterdir() if p.suffix.lower() in EXTENSIONS)
+    if len(files) != expected:
+        raise SystemExit(f"{folder}: expected {expected} files, found {len(files)}")
+    return files
+
 
 def build_block_trials(files, n_reps, rng):
     trials = []
@@ -135,6 +149,7 @@ class Experiment:
         self.trial_global = 0
         self.trial_idx = 0
         self.trial_open = False
+        self.phase = "test"
         self.sounds = {}
         self.video_info = {}
         self.tmpdir = tempfile.TemporaryDirectory()
@@ -160,28 +175,30 @@ class Experiment:
         plan = []
         for pos, name in enumerate(block_names, 1):
             folder, mode = BLOCKS[name]
-            files = sorted(p for p in (MEDIA_ROOT / folder).iterdir()
-                           if p.suffix.lower() in EXTENSIONS)
-            if len(files) != CLIPS_PER_BLOCK:
-                raise SystemExit(f"{folder}: expected {CLIPS_PER_BLOCK} files, found {len(files)}")
+            files = list_media(MEDIA_ROOT / folder, CLIPS_PER_BLOCK)
+            practice = list_media(TRAIN_ROOT / folder, N_PRACTICE)
             plan.append({"pos": pos, "name": name, "mode": mode,
+                         "practice": practice,
                          "trials": build_block_trials(files, N_REPS, self.rng)})
         return plan
 
     def _write_design(self):
-        append_row_safely(self.design_path,
-                          ["participant", "block_order_pos", "block", "trial_in_block",
-                           "repetition", "stimulus"])
+        append_row_safely(self.design_path, DESIGN_COLUMNS)
         for b in self.plan:
+            for i, f in enumerate(b["practice"], 1):
+                append_row_safely(self.design_path,
+                                  [self.participant, b["pos"], b["name"], "practice",
+                                   i, "", f.name])
             for i, (rep, f) in enumerate(b["trials"], 1):
                 append_row_safely(self.design_path,
-                                  [self.participant, b["pos"], b["name"], i, rep, f.name])
+                                  [self.participant, b["pos"], b["name"], "test",
+                                   i, rep, f.name])
 
     # ---------- stimulus preparation ----------
     def _prepare_audio(self, path):
         if wav_is_usable_directly(path):
             return pygame.mixer.Sound(str(path))
-        out = Path(self.tmpdir.name) / f"{path.parent.name}_{path.stem}.wav"
+        out = Path(self.tmpdir.name) / f"clip_{len(self.sounds)}.wav"   # unique name per clip
         subprocess.run([self.ffmpeg, "-y", "-loglevel", "error", "-i", str(path), "-vn",
                         "-ac", "2", "-ar", str(MIXER_FREQ), "-acodec", "pcm_s16le", str(out)],
                        check=True)
@@ -197,7 +214,8 @@ class Experiment:
     def prepare(self):
         self.draw_text("Preparing stimuli…")
         for block in self.plan:
-            for _, f in block["trials"]:
+            files = block["practice"] + [f for _, f in block["trials"]]
+            for f in files:
                 if block["mode"] in ("audio", "both") and f not in self.sounds:
                     self.sounds[f] = self._prepare_audio(f)
                 if block["mode"] in ("video", "both") and f not in self.video_info:
@@ -349,23 +367,40 @@ class Experiment:
             self.clock.tick(120)
 
     # ---------- main flow ----------
+    def run_trial(self, file, mode, phase, rep, idx):
+        self.file, self.rep, self.trial_idx, self.phase = file, rep, idx, phase
+        if phase == "test":
+            self.trial_global += 1
+        self.trial_open = True
+        self.draw_text("+")
+        self.wait_ms(ITI_MS)
+        self.play_clip(file, mode)
+        rating, rt = self.get_rating()
+        self.save(rating, "completed", rt)
+        self.trial_open = False
+
     def run(self):
         try:
             self.prepare()
             self.wait_space("Welcome.\n\nEach clip plays automatically. When it ends, rate it "
-                            "from 1 to 5 using the keyboard.\n\nPress SPACE to begin.")
+                            "from 1 to 5 using the keyboard.\n\nBefore each block you will see "
+                            f"{N_PRACTICE} practice examples.\n\nPress SPACE to begin.")
             for bi, block in enumerate(self.plan):
                 self.block = block
+
+                # ---- practice ----
+                self.wait_space(f"Block {bi + 1} of {len(self.plan)}.\n\n"
+                                f"First, {N_PRACTICE} practice examples to get used to the task. "
+                                "They are not part of the test.\n\nPress SPACE to start the practice.")
+                for i, file in enumerate(block["practice"], 1):
+                    self.run_trial(file, block["mode"], "practice", "", i)
+                self.wait_space("Practice finished.\n\nThe test block starts now.\n\n"
+                                "Press SPACE to continue.")
+
+                # ---- test ----
                 for i, (rep, file) in enumerate(block["trials"], 1):
-                    self.rep, self.file, self.trial_idx = rep, file, i
-                    self.trial_global += 1
-                    self.trial_open = True
-                    self.draw_text("+")
-                    self.wait_ms(ITI_MS)
-                    self.play_clip(file, block["mode"])
-                    rating, rt = self.get_rating()
-                    self.save(rating, "completed", rt)
-                    self.trial_open = False
+                    self.run_trial(file, block["mode"], "test", rep, i)
+
                 if bi < len(self.plan) - 1:
                     self.wait_space(f"Block {bi + 1} of {len(self.plan)} complete.\n\n"
                                     "Take a short break.\nPress SPACE to continue.")
@@ -377,9 +412,12 @@ class Experiment:
 
     # ---------- saving / shutdown ----------
     def save(self, response, status, rt=None):
+        is_test = self.phase == "test"
         append_row_safely(self.out_path, [
-            self.participant, self.block["name"], self.file.name, self.rep, response,
-            status, self.block["pos"], self.trial_idx, self.trial_global,
+            self.participant, self.block["name"], self.phase, self.file.name,
+            self.rep if is_test else "", response,
+            status, self.block["pos"], self.trial_idx,
+            self.trial_global if is_test else "",
             "" if rt is None else f"{rt:.3f}",
             datetime.now().isoformat(timespec="seconds")])
 

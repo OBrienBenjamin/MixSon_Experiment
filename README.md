@@ -107,13 +107,12 @@ python mos_strategy.py --participant P01 --parameter synch    # MOS rating
 python mos_strategy.py --participant P01 --parameter speed    # pairwise comparison
 ```
 
-Options:
+Required settings :
 
-| Option | Meaning |
+| Flag | Meaning |
 |---|---|
 | `--participant ID` | participant identifier (required), used in the output file names |
 | `--parameter {synch,speed}` |
-| `--seed N` | optional: makes block and trial order reproducible |
 
 ### Both tasks of `mos_modality.py` and `mos_strategy.py`
 
@@ -170,7 +169,7 @@ Columns, `--parameter speed`:
 `participant, parameter, block, phase, first, second, pair, response, chosen, status,
 block_order_pos, trial_in_block, trial_global, rt_after_playback_s, timestamp`
 
-- `response` is the rating (1-5) in `synch`, or 1/2 (first/second) in `speed`; `chosen` is the
+- `response` is the rating (1-5) in `synch`, or 1 or 2 (first or second) in `speed`; `chosen` is the
   file that was picked as faster.
 - `phase` is `practice` or `test`; `status` is `completed` or `aborted`.
 - For analysis, keep rows where `phase == test` and `status == completed`.

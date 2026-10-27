@@ -1,13 +1,13 @@
-# MixSon: perceptual experiments (MOS and pairwise)
+# MixSon: perceptual experiments (MOS and pairwise comparisons)
 
 Perceptual experiments for audio-visual synchronization with sonification:
 
 - `mos_modality.py`: audio-only, video-only and audiovisual clips. 
-- `mos_strategy.py`: sonification strategy {EVENT, STATIC, FM}
+- `mos_strategy.py`: sonification strategy {3-different strategies}
 
 Both scripts require setting the `--parameter` flag, which selects the task / media :
   - `synch`: Mean Opinion Score (1-5) rating
-  - `speed`: pairwise comparison ("which one was faster at the point of impact?")
+  - `speed`: pairwise comparison ("Which service was faster at impact?")
 
 Everything runs in a single fullscreen window, and every response is written to
 disk immediately, so data are safe even if a session is interrupted.
@@ -50,7 +50,7 @@ This installs Python, ffmpeg, ffprobe and pygame in one step.
 3. Create and activate the environment:
    ```bash
    conda env create -f environment.yaml
-   conda activate mixson
+   conda activate your_env
    ```
 
 ### Check the installation
@@ -88,7 +88,6 @@ media/
 │       ├── AV/                    6 clips
 │       └── Train/{Audio,Video,AV}/    2 practice clips each
 └── Strategy/                      (used by mos_strategy.py)
-    └── {EVENT,FM,STATIC}/
 ```
 
 Supported formats: `.mp4`, `.wav`. Each folder must contain exactly the expected
@@ -104,7 +103,8 @@ python mos_modality.py --participant P01 --parameter synch    # MOS rating
 python mos_modality.py --participant P01 --parameter speed    # pairwise comparison
 
 # Strategy experiment
-python mos_strategy.py --participant P01
+python mos_strategy.py --participant P01 --parameter synch    # MOS rating
+python mos_strategy.py --participant P01 --parameter speed    # pairwise comparison
 ```
 
 Options:
@@ -120,7 +120,7 @@ Options:
 | | `--parameter synch` | `--parameter speed` |
 |---|---|---|
 | Task | MOS rating | pairwise comparison |
-| Stimuli folder | `media/Modality/Synch/` | `media/Modality/Speed/` |
+| Stimuli folder | `media/{--parameter}/Synch/` | `media/{--parameter}/Speed/` |
 | Clips per block | 8 | 6 |
 | Trials per block | 8 clips x 1 repetition = 8 | 15 pairs x 2 orders (AB and BA) = 30 |
 | Presentation | one clip per trial | two clips one after the other (1 s pause) |

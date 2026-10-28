@@ -192,7 +192,7 @@ def speed_id(path):
         return int(m.group()) if m else None
 
 class Experiment:
-    def __init__(self, participant, parameter, seed=None):
+    def __init__(self, participant, parameter, seed=None, start_bloc = None):
         self.ffmpeg = shutil.which("ffmpeg")
         self.ffprobe = shutil.which("ffprobe")
         if not (self.ffmpeg and self.ffprobe):
@@ -206,7 +206,8 @@ class Experiment:
         self.media_dir = MEDIA_ROOT / self.cfg["folder"]
         self.train_dir = self.media_dir / TRAIN_DIRNAME
         self.rng = random.Random(seed)
-
+        self.start_block = start_bloc
+        
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prefix = f"{self.kind}_{parameter}_{participant}_{stamp}"
@@ -269,6 +270,11 @@ class Experiment:
     def _make_plan(self):
         block_names = list(BLOCKS)
         self.rng.shuffle(block_names)
+        if self.start_block:                                   # force this block to come first
+            first = next(n for n in BLOCKS if n.lower() == self.start_block)
+            block_names.remove(first)
+            block_names.insert(0, first)
+            
         plan = []
         for pos, name in enumerate(block_names, 1):
             folder, mode = BLOCKS[name]
@@ -593,6 +599,9 @@ if __name__ == "__main__":
     ap.add_argument("--participant", required=True)
     ap.add_argument("--parameter", required=True, type=str.lower, choices=sorted(PARAMETERS),
                     help="synch = MOS rating test; speed = pairwise comparison test")
+    ap.add_argument("--start-block", type=str.lower, default=None,
+                    choices=[b.lower() for b in BLOCKS],
+                    help="block to run first (the others stay in random order)")
     ap.add_argument("--seed", type=int, default=None, help="optional, for reproducible order")
     args = ap.parse_args()
-    Experiment(args.participant, args.parameter, args.seed).run()
+    Experiment(args.participant, args.parameter, args.seed, args.start_block).run()

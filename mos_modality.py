@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import re
 import queue
 import random
 import shutil
@@ -39,6 +40,7 @@ PARAMETERS = {
         "folder": "Synch",
         "clips_per_block": 8,
         "n_reps": 1,
+        "n_practice": 2,
         "question": "How would you rate the quality of what you just experienced?",
         "instructions": ("Welcome.\n\nEach clip plays automatically. When it ends, rate it "
                          "from 1 to 5 using the keyboard.\n\nBefore each block you will do "
@@ -48,6 +50,8 @@ PARAMETERS = {
         "task": "pairwise",
         "folder": "Speed",
         "clips_per_block": 6,    # -> 15 pairs x 2 orders = 30 trials per block
+        "n_practice": 4,
+        "practice_pairs": [(32,50), (34, 53)],
         "question": "Which one was faster at the point of impact?",
         "instructions": ("Welcome.\n\nIn each trial you will perceive two clips, one after the "
                          "other.\n\nAfter the second clip, choose which one was faster at the "
@@ -182,6 +186,10 @@ def frame_reader(proc, frame_bytes, q, stop, done):
     finally:
         done.set()
 
+def speed_id(path):
+        """First number in the file name, e.g. 'Speed_32' or 'speed_32_step' -> 32."""
+        m = re.search(r"\d+", path.stem)
+        return int(m.group()) if m else None
 
 class Experiment:
     def __init__(self, participant, parameter, seed=None):
@@ -234,10 +242,29 @@ class Experiment:
         self.clock = pygame.time.Clock()
 
     # ---------- planning ----------
-    def _make_practice(self, files):
+    def _make_practice(self, files, folder):
         if self.kind == "mos":
             return [{"rep": "", "clips": (f,)} for f in files]      # sorted filename order
-        return build_pairwise_trials(files, self.rng)
+
+        # speed: one trial per configured pair, each in a random order (AB or BA)
+        by_id = {}
+        for f in files:
+            sid = speed_id(f)
+            if sid is None or sid in by_id:
+                raise SystemExit(f"{folder}: can't match practice files by number "
+                                 f"(problem with '{f.name}'). Expected one file per number.")
+            by_id[sid] = f
+        trials = []
+        for a, b in self.cfg["practice_pairs"]:
+            if a not in by_id or b not in by_id:
+                raise SystemExit(f"{folder}: no file for {a} or {b}. "
+                                 f"Found numbers: {sorted(by_id)}")
+            fa, fb = by_id[a], by_id[b]
+            if self.rng.random() < 0.5:
+                fa, fb = fb, fa
+            trials.append({"rep": "", "clips": (fa, fb)})
+        self.rng.shuffle(trials)                                   # random trial order too
+        return trials
 
     def _make_plan(self):
         block_names = list(BLOCKS)
@@ -252,7 +279,8 @@ class Experiment:
                 trials = build_pairwise_trials(files, self.rng)
             practice = []
             if USE_PRACTICE:
-                practice = self._make_practice(list_media(self.train_dir / folder, N_PRACTICE))
+                tdir = self.train_dir / folder
+                practice = self._make_practice(list_media(tdir, self.cfg["n_practice"]), tdir)
             plan.append({"pos": pos, "name": name, "mode": mode,
                          "practice": practice, "trials": trials})
         return plan

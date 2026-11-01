@@ -241,6 +241,6 @@ Constants at the top of `mos_modality.py` and `mos_strategy.py`:
 - **Choppy video**: re-encode clips to H.264, 720p or 1080p, 25-30 fps, or lower `CANVAS`.
 - **Dock/menu bar visible (macOS)**: set the Dock to auto-hide during sessions.
 
-## Licence / stimuli
+## Stimuli
 
-Coming soon . . .
+Available on request

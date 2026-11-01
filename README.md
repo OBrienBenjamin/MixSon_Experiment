@@ -2,10 +2,11 @@
 
 Perceptual experiments for audio-visual synchronization with sonification:
 
-- `mos_modality.py`: audio-only, video-only and audiovisual clips. 
-- `mos_strategy.py`: sonification strategy {3-different strategies}
+- `mos_modality.py`: audio-only, video-only and audiovisual clips (three blocks, one per modality).
+- `mos_strategy.py`: audiovisual clips only; one block per sonification strategy.
 
-Both scripts require setting the `--parameter` flag, which selects the task / media :
+Both scripts require the `--parameter` flag, which selects the task and the media:
+
   - `synch`: Mean Opinion Score (1-5) rating
   - `speed`: pairwise comparison ("Which service was faster at impact?")
 
@@ -28,9 +29,9 @@ disk immediately, so data are safe even if a session is interrupted.
 |---|---|---|
 | Python | 3.12 | |
 | pygame | 2.6.1 | installed via conda or pip |
-| ffmpeg + ffprobe | |
+| ffmpeg + ffprobe | | must be on your PATH |
 
-All other imports (`argparse`, `csv`, `queue`, `subprocess`, `threading`, `wave`, etc.)
+All other imports (`argparse`, `csv`, `queue`, `re`, `subprocess`, `threading`, `wave`, etc.)
 are part of Python's standard library and need no installation.
 
 Developed and tested on **macOS 12**. Windows and Linux are untested: run a trial
@@ -76,22 +77,49 @@ After unzipping, the `media/` folder must have this structure:
 
 ```
 media/
-├── Modality/
-│   ├── Synch/                     (used with --parameter synch)
-│   │   ├── Audio/                 8 clips
-│   │   ├── Video/                 8 clips
-│   │   ├── AV/                    8 clips
-│   │   └── Train/{Audio,Video,AV}/    2 practice clips each
-│   └── Speed/                     (used with --parameter speed)
-│       ├── Audio/                 6 clips
-│       ├── Video/                 6 clips
-│       ├── AV/                    6 clips
-│       └── Train/{Audio,Video,AV}/    2 practice clips each
-└── Strategy/                      (used by mos_strategy.py)
+├── Audio/    .wav   (mos_modality.py only)
+├── Video/    .mov   (mos_modality.py only)
+└── AV/       .mp4   (mos_modality.py and mos_strategy.py)
 ```
 
-Supported formats: `.mp4`, `.wav`. Each folder must contain exactly the expected
-number of files, otherwise the script stops with a message naming the folder.
+All files are selected **by name**. `<prefix>` is `Speed` (for `--parameter speed`) or
+`Synch` (for `--parameter synch`), and `<n>` is an integer. Capitalization does not matter.
+
+### `mos_modality.py`
+
+| Folder | File name | Speed example | Synch example |
+|---|---|---|---|
+| `Audio/` | `<prefix>_<n>_<suffix>.wav` | `Speed_37_Step.wav` | `Synch_75_Event.wav` |
+| `AV/` | `<prefix>_<n>_<suffix>.mp4` | `Speed_37_Step.mp4` | `Synch_75_Event.mp4` |
+| `Video/` | `<prefix>_<n>.mov` | `Speed_37.mov` | `Synch_75.mov` |
+
+The suffix is `Step` for `speed` and `Event` for `synch`.
+
+### `mos_strategy.py`
+
+Only `AV/` is used, and each block (strategy) reads the files carrying its own suffix:
+
+| `--parameter` | Blocks (random order) | Files read from `AV/` |
+|---|---|---|
+| `speed` | Step, OSC, BPF | `Speed_<n>_Step.mp4`, `Speed_<n>_OSC.mp4`, `Speed_<n>_BPF.mp4` |
+| `synch` | Event, Static, Centroid | `Synch_<n>_Event.mp4`, `Synch_<n>_Static.mp4`, `Synch_<n>_Centroid.mp4` |
+
+### Practice and test clips
+
+Practice clips are identified by their number; all other matching files are test clips.
+
+| `--parameter` | Practice numbers | Test clips per block |
+|---|---|---|
+| `speed` | 32, 34, 50, 53 | 6 |
+| `synch` | 75, 400 | 8 |
+
+Practice clips use the same name pattern as the block's test clips (for example
+`Speed_32_OSC.mp4` is the practice clip of the OSC block, and `Speed_32.mov` that of the
+Video block). Files that don't match the pattern of the block (for example other strategies
+in the same folder) are ignored.
+
+Supported formats: `.wav` (Audio), `.mov` (Video), `.mp4` (AV). Every AV clip needs an audio track.
+If a block does not find the expected number of clips, the script stops and lists the files it found.
 
 ## Running an experiment
 
@@ -107,35 +135,39 @@ python mos_strategy.py --participant P01 --parameter synch    # MOS rating
 python mos_strategy.py --participant P01 --parameter speed    # pairwise comparison
 ```
 
-Required settings :
+Options:
 
 | Flag | Meaning |
 |---|---|
-| `--participant ID` | participant identifier (required), used in the output file names |
-| `--parameter {synch,speed}` |
+| `--participant ID` | required: participant identifier, used in the output file names |
+| `--parameter {synch,speed}` | required: which task to run (see below) |
+| `--start-block NAME` | optional: run this block first; the other blocks stay in random order. `mos_modality.py`: `audio`, `video`, `audiovisual`. `mos_strategy.py`: `step`, `osc`, `bpf` (speed) or `event`, `static`, `centroid` (synch) |
+| `--seed N` | optional: makes block and trial order reproducible |
 
-### Both tasks of `mos_modality.py` and `mos_strategy.py`
+Example: `python mos_strategy.py --participant P02 --parameter speed --start-block osc`
+
+### The two tasks (both scripts)
 
 | | `--parameter synch` | `--parameter speed` |
 |---|---|---|
 | Task | MOS rating | pairwise comparison |
-| Stimuli folder | `media/{--parameter}/Synch/` | `media/{--parameter}/Speed/` |
-| Clips per block | 8 | 6 |
+| File prefix | `Synch_` | `Speed_` |
+| Test clips per block | 8 | 6 |
 | Trials per block | 8 clips x 1 repetition = 8 | 15 pairs x 2 orders (AB and BA) = 30 |
 | Presentation | one clip per trial | two clips one after the other (1 s pause) |
 | Response | rate the clip with keys **1-5** (1 = bad, 5 = excellent) | key **1** = first clip, **2** = second clip |
+| Practice | 2 trials (clips 75 and 400) | 2 trials (32 vs 50 and 34 vs 53, each in a random order AB or BA) |
 
-The difference between the two scripts centers on the media used:
+The difference between the two scripts is the media used for the blocks (3 blocks each,
+presented in random order for every participant):
 
-`mos_modality.py` : 
-| Blocks | Audio-only, Video-only, Audiovisual (random order) | Audio-only, Video-only, Audiovisual (random order) |
+| | Blocks | Media |
+|---|---|---|
+| `mos_modality.py` | Audio-only, Video-only, Audiovisual | `Audio/`, `Video/`, `AV/` |
+| `mos_strategy.py` | `speed`: Step, OSC, BPF<br>`synch`: Event, Static, Centroid | `AV/` (all blocks audiovisual) |
 
-`mos_strategy.py` : 
-| Blocks | 3-Different Sonification strategies (random order) | Audiovisual |
-
-A short practice (2 trials) is run before each block, using the files in the matching
-`Train/` folder. The practice trials are logged with `phase = practice` and are not part of
-the test.
+A short practice is run before each block. The practice trials are logged with
+`phase = practice` and are not part of the test.
 
 In the `speed` task, every pair of clips is shown in both orders, and the two orders of the same
 pair never appear back to back. In the `synch` task, all clips in a block are shuffled and a clip
@@ -153,13 +185,15 @@ to auto-hide.
 
 ## Output
 
-Written to `Responses/Modality/` for `mos_modality.py` and `Responses/Strategy/` for `mos_strategy.py` (not tracked by git). 
+Written to `Responses/Modality/` for `mos_modality.py` and `Responses/Strategy/` for `mos_strategy.py` (not tracked by git).
 
-| File | Content |
-|---|---|
-| `mos_synch_<participant>_<timestamp>.csv` | one row per trial (MOS) |
-| `pairwise_speed_<participant>_<timestamp>.csv` | one row per trial (pairwise) |
-| `<same name>_design.csv` | the planned trial order for that session |
+| Script | Task | File |
+|---|---|---|
+| `mos_modality.py` | synch | `mos_synch_<participant>_<timestamp>.csv` |
+| `mos_modality.py` | speed | `pairwise_speed_<participant>_<timestamp>.csv` |
+| `mos_strategy.py` | synch | `strategy_mos_synch_<participant>_<timestamp>.csv` |
+| `mos_strategy.py` | speed | `strategy_pairwise_speed_<participant>_<timestamp>.csv` |
+| both | both | `<same name>_design.csv`: the planned trial order for that session |
 
 Columns, `--parameter synch`:
 `participant, parameter, block, phase, stimulus, repetition, response, status,
@@ -169,6 +203,8 @@ Columns, `--parameter speed`:
 `participant, parameter, block, phase, first, second, pair, response, chosen, status,
 block_order_pos, trial_in_block, trial_global, rt_after_playback_s, timestamp`
 
+- `block` is the modality (Audio, Video, Audiovisual) in `mos_modality.py` and the strategy
+  (Step, OSC, BPF, Event, Static, Centroid) in `mos_strategy.py`.
 - `response` is the rating (1-5) in `synch`, or 1 or 2 (first or second) in `speed`; `chosen` is the
   file that was picked as faster.
 - `phase` is `practice` or `test`; `status` is `completed` or `aborted`.
@@ -182,8 +218,10 @@ Constants at the top of `mos_modality.py` and `mos_strategy.py`:
 
 | Setting | Purpose |
 |---|---|
-| `PARAMETERS` | per-task settings: stimuli folder, clips per block, repetitions (`synch`), question and instruction text |
-| `USE_PRACTICE`, `N_PRACTICE`, `TRAIN_DIRNAME` | practice trials before each block |
+| `PARAMETERS` | per-task settings: file prefix, suffix (modality) or strategies (strategy), test clips per block, repetitions (`synch`), practice numbers (`train_ids`, `practice_pairs`), question and instruction text |
+| `BLOCKS` (`mos_modality.py`) | blocks with their folder, mode and file extension |
+| `USE_PRACTICE` | turn the practice trials before each block on or off |
+| `ALLOW_MISSING_AUDIO` | `True` plays clips without an audio track silently (for testing only) |
 | `ITI_MS`, `CUE_MS`, `ISI_MS` | fixation, "1"/"2" cue and pause between the two clips (`speed`) |
 | `SCALE_LABELS` | labels of the 1-5 rating scale (`synch`) |
 | `CANVAS` | internal render size (lower it if video is choppy) |
@@ -192,11 +230,15 @@ Constants at the top of `mos_modality.py` and `mos_strategy.py`:
 ## Troubleshooting
 
 - **`ffmpeg/ffprobe not found`**: activate the conda env, or install ffmpeg.
-- **`Folder not found: .../Train/...`**: the practice folders are missing. Add them
-  (see Stimuli) or set `USE_PRACTICE = False`.
-- **`expected N files, found M`**: each stimulus folder must contain exactly the expected number of clips.
-- **`error: argument --parameter ... invalid choice`**: use `--parameter synch` or `--parameter speed`.
-- **Choppy video**: re-encode clips to H.264, 720p or 1080p, 25–30 fps, or lower `CANVAS`.
+- **`expected N test files named ..., found M`**: a block does not contain the expected number of
+  clips. The message lists the files that were counted; check the file names against the
+  naming rules (see Stimuli).
+- **`missing practice file(s): ...`**: add the listed practice clips, or set `USE_PRACTICE = False`.
+- **`No audio track found in ...`**: re-export that clip with its audio track (needed for the AV blocks).
+- **`Folder not found`**: the `media/` folder is missing or not in the main `MixSon_Experiment` folder (see Stimuli).
+- **`error: argument --parameter ... invalid choice` / `--start-block ... must be one of`**: use
+  `--parameter synch` or `speed`, and a block name listed in the options table.
+- **Choppy video**: re-encode clips to H.264, 720p or 1080p, 25-30 fps, or lower `CANVAS`.
 - **Dock/menu bar visible (macOS)**: set the Dock to auto-hide during sessions.
 
 ## Licence / stimuli

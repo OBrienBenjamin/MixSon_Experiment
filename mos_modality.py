@@ -21,37 +21,37 @@ except ImportError:
 
 # ---------------- configuration ----------------
 HERE = Path(__file__).resolve().parent
-MEDIA_ROOT = HERE / "media" / "Modality"           # media/Modality/<Speed|Synch>/<block folders>
+MEDIA_ROOT = HERE / "media"                        # media/<Audio|AV|Video>/<speed|synch>_<n>[_text].<ext>
 RESULTS_DIR = HERE / "Responses" / "Modality"
-TRAIN_DIRNAME = "Train"                            # media/Modality/<Speed|Synch>/Train/<block folders>
 USE_PRACTICE = True
-N_PRACTICE = 2                                     # files per practice folder
-                                                   # (synch: 2 practice clips; speed: 2 clips = 1 pair shown in both orders)
+ALLOW_MISSING_AUDIO = False      # True = play clips without an audio track silently (testing only)
 
-BLOCKS = {                       # block name -> (folder, mode)
-    "Audio":       ("Audio", "audio"),
-    "Video":       ("Video", "video"),
-    "Audiovisual": ("AV",    "both"),
+BLOCKS = {                       # block name -> (folder, mode, extension, name has the _<suffix>?)
+    "Audio":       ("Audio", "audio", ".wav", True),
+    "Video":       ("Video", "video", ".mp4", False),
+    "Audiovisual": ("AV",    "both",  ".mp4", True),
 }
 
 PARAMETERS = {
-    "synch": {                   # MOS rating (1-5)
+    "synch": {
         "task": "mos",
-        "folder": "Synch",
-        "clips_per_block": 8,
+        "prefix": "synch",
+        "suffix": "_Event",      # Audio/AV files: synch_<n>_Event (Video: synch_<n>)
+        "clips_per_block": 8,    # test clips per block (practice files not counted)
         "n_reps": 1,
-        "n_practice": 2,
+        "train_ids": [75, 400],  # practice clips, played in this order
         "question": "How would you rate the quality of what you just experienced?",
         "instructions": ("Welcome.\n\nEach clip plays automatically. When it ends, rate it "
                          "from 1 to 5 using the keyboard.\n\nBefore each block you will do "
                          "a short practice.\n\nPress SPACE to begin."),
     },
-    "speed": {                   # pairwise comparison (all pairs, both orders)
+    "speed": {
         "task": "pairwise",
-        "folder": "Speed",
+        "prefix": "speed",
+        "suffix": "_Step",     # files are named speed_<n>[_text]
         "clips_per_block": 6,    # -> 15 pairs x 2 orders = 30 trials per block
-        "n_practice": 4,
-        "practice_pairs": [(32,50), (34, 53)],
+        "train_ids": [32, 34, 50, 53],
+        "practice_pairs": [(32, 50), (34, 53)],     # one practice trial per pair, random AB/BA
         "question": "Which one was faster at the point of impact?",
         "instructions": ("Welcome.\n\nIn each trial you will perceive two clips, one after the "
                          "other.\n\nAfter the second clip, choose which one was faster at the "
@@ -63,8 +63,6 @@ PARAMETERS = {
 
 SCALE_LABELS = {1: "Bad", 2: "Poor", 3: "Fair", 4: "Good", 5: "Excellent"}      # synch
 CHOICE_LABELS = {1: "the FIRST", 2: "the SECOND"}                                # speed
-
-EXTENSIONS = {".mp4", ".mov", ".wav"}
 
 ITI_MS = 500                     # fixation before each trial
 CUE_MS = 500                     # speed only: "1" / "2" cue before each clip
@@ -92,14 +90,30 @@ class Abort(Exception):
     pass
 
 
-def list_media(folder, expected):
-    """Sorted media files in folder; exits with a clear message if missing or wrong count."""
+def split_media(folder, ext, prefix, train_ids, suffix):
+    """Find <prefix>_<n><suffix><ext> files in folder (case-insensitive).
+    Files whose number is in train_ids are practice clips; the rest are test clips.
+    Files with any other suffix (e.g. _BPF, _OSC) are ignored.
+    Returns (test_files, train_by_id)."""
     if not folder.is_dir():
         raise SystemExit(f"Folder not found: {folder}")
-    files = sorted(p for p in folder.iterdir() if p.suffix.lower() in EXTENSIONS)
-    if len(files) != expected:
-        raise SystemExit(f"{folder}: expected {expected} files, found {len(files)}")
-    return files
+    pat = re.compile(rf"^{re.escape(prefix)}_(\d+){re.escape(suffix)}$", re.IGNORECASE)
+    test, train = [], {}
+    for p in sorted(folder.iterdir()):
+        if p.suffix.lower() != ext:
+            continue
+        m = pat.match(p.stem)
+        if not m:
+            continue
+        sid = int(m.group(1))
+        if sid in train_ids:
+            if sid in train:
+                raise SystemExit(f"{folder}: two files match practice clip {prefix}_{sid}{suffix}: "
+                                 f"{train[sid].name} and {p.name}")
+            train[sid] = p
+        else:
+            test.append(p)
+    return test, train
 
 
 def build_mos_trials(files, n_reps, rng):
@@ -116,18 +130,15 @@ def build_mos_trials(files, n_reps, rng):
 
 def build_pairwise_trials(files, rng):
     """All unordered pairs in both orders (AB and BA), shuffled; the two orders of the
-    same pair never occur back to back (when there are more than 2 files)."""
+    same pair never occur back to back."""
     pairs = list(combinations(files, 2))
     trials = [{"rep": "", "clips": (a, b)} for a, b in pairs]
     trials += [{"rep": "", "clips": (b, a)} for a, b in pairs]
-    if len(files) > 2:
-        for _ in range(2000):
-            rng.shuffle(trials)
-            if all(frozenset(trials[i]["clips"]) != frozenset(trials[i + 1]["clips"])
-                   for i in range(len(trials) - 1)):
-                break
-    else:
+    for _ in range(2000):
         rng.shuffle(trials)
+        if all(frozenset(trials[i]["clips"]) != frozenset(trials[i + 1]["clips"])
+               for i in range(len(trials) - 1)):
+            break
     return trials
 
 
@@ -150,6 +161,14 @@ def wav_is_usable_directly(path):
             return w.getsampwidth() == 2 and w.getframerate() == MIXER_FREQ
     except Exception:
         return False
+
+
+def has_audio_stream(ffprobe, path):
+    out = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True)
+    return bool(out.stdout.strip())
 
 
 def probe_video(ffprobe, path):
@@ -186,13 +205,9 @@ def frame_reader(proc, frame_bytes, q, stop, done):
     finally:
         done.set()
 
-def speed_id(path):
-        """First number in the file name, e.g. 'Speed_32' or 'speed_32_step' -> 32."""
-        m = re.search(r"\d+", path.stem)
-        return int(m.group()) if m else None
 
 class Experiment:
-    def __init__(self, participant, parameter, seed=None, start_bloc = None):
+    def __init__(self, participant, parameter, seed=None, start_block=None):
         self.ffmpeg = shutil.which("ffmpeg")
         self.ffprobe = shutil.which("ffprobe")
         if not (self.ffmpeg and self.ffprobe):
@@ -203,11 +218,9 @@ class Experiment:
         self.parameter = parameter
         self.cfg = PARAMETERS[parameter]
         self.kind = self.cfg["task"]                       # "mos" or "pairwise"
-        self.media_dir = MEDIA_ROOT / self.cfg["folder"]
-        self.train_dir = self.media_dir / TRAIN_DIRNAME
         self.rng = random.Random(seed)
-        self.start_block = start_bloc
-        
+        self.start_block = start_block
+
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prefix = f"{self.kind}_{parameter}_{participant}_{stamp}"
@@ -243,24 +256,14 @@ class Experiment:
         self.clock = pygame.time.Clock()
 
     # ---------- planning ----------
-    def _make_practice(self, files, folder):
+    def _make_practice(self, train_by_id):
         if self.kind == "mos":
-            return [{"rep": "", "clips": (f,)} for f in files]      # sorted filename order
+            return [{"rep": "", "clips": (train_by_id[i],)} for i in self.cfg["train_ids"]]
 
         # speed: one trial per configured pair, each in a random order (AB or BA)
-        by_id = {}
-        for f in files:
-            sid = speed_id(f)
-            if sid is None or sid in by_id:
-                raise SystemExit(f"{folder}: can't match practice files by number "
-                                 f"(problem with '{f.name}'). Expected one file per number.")
-            by_id[sid] = f
         trials = []
         for a, b in self.cfg["practice_pairs"]:
-            if a not in by_id or b not in by_id:
-                raise SystemExit(f"{folder}: no file for {a} or {b}. "
-                                 f"Found numbers: {sorted(by_id)}")
-            fa, fb = by_id[a], by_id[b]
+            fa, fb = train_by_id[a], train_by_id[b]
             if self.rng.random() < 0.5:
                 fa, fb = fb, fa
             trials.append({"rep": "", "clips": (fa, fb)})
@@ -268,27 +271,46 @@ class Experiment:
         return trials
 
     def _make_plan(self):
+        prefix = self.cfg["prefix"]
         block_names = list(BLOCKS)
         self.rng.shuffle(block_names)
         if self.start_block:                                   # force this block to come first
             first = next(n for n in BLOCKS if n.lower() == self.start_block)
             block_names.remove(first)
             block_names.insert(0, first)
-            
+
         plan = []
         for pos, name in enumerate(block_names, 1):
-            folder, mode = BLOCKS[name]
-            files = list_media(self.media_dir / folder, self.cfg["clips_per_block"])
+            folder, mode, ext, uses_suffix = BLOCKS[name]
+            tsuffix = self.cfg["suffix"] if uses_suffix else ""
+            fdir = MEDIA_ROOT / folder
+            test_files, train_by_id = split_media(fdir, ext, prefix,
+                                                self.cfg["train_ids"], tsuffix)
+
+            n = self.cfg["clips_per_block"]
+            if len(test_files) != n:
+                raise SystemExit(
+                    f"{fdir}: expected {n} test files named {prefix}_<n>{tsuffix}{ext}, "
+                    f"found {len(test_files)}.\n"
+                    f"(numbers in {self.cfg['train_ids']} are used for practice; "
+                    f"other suffixes are ignored)\n  "
+                    + "\n  ".join(p.name for p in test_files))
+
             if self.kind == "mos":
-                trials = build_mos_trials(files, self.cfg["n_reps"], self.rng)
+                trials = build_mos_trials(test_files, self.cfg["n_reps"], self.rng)
             else:
-                trials = build_pairwise_trials(files, self.rng)
+                trials = build_pairwise_trials(test_files, self.rng)
+
             practice = []
             if USE_PRACTICE:
-                tdir = self.train_dir / folder
-                practice = self._make_practice(list_media(tdir, self.cfg["n_practice"]), tdir)
+                missing = [f"{prefix}_{i}{tsuffix}{ext}"
+                        for i in self.cfg["train_ids"] if i not in train_by_id]
+                if missing:
+                    raise SystemExit(f"{fdir}: missing practice file(s): {', '.join(missing)}")
+                practice = self._make_practice(train_by_id)
+
             plan.append({"pos": pos, "name": name, "mode": mode,
-                         "practice": practice, "trials": trials})
+                        "practice": practice, "trials": trials})
         return plan
 
     def _write_design(self):
@@ -306,6 +328,13 @@ class Experiment:
     def _prepare_audio(self, path):
         if wav_is_usable_directly(path):
             return pygame.mixer.Sound(str(path))
+        if not has_audio_stream(self.ffprobe, path):
+            if ALLOW_MISSING_AUDIO:
+                print(f"[warning] no audio track in {path}; it will play silently")
+                return None
+            raise SystemExit(f"No audio track found in: {path}\n"
+                             "Re-export it with audio (needed for the audiovisual block), "
+                             "or set ALLOW_MISSING_AUDIO = True to play it silently.")
         out = Path(self.tmpdir.name) / f"clip_{len(self.sounds)}.wav"   # unique name per clip
         subprocess.run([self.ffmpeg, "-y", "-loglevel", "error", "-i", str(path), "-vn",
                         "-ac", "2", "-ar", str(MIXER_FREQ), "-acodec", "pcm_s16le", str(out)],
@@ -394,7 +423,7 @@ class Experiment:
     def play_clip(self, file, mode, label=None):
         """Play one clip. `label` ("1"/"2") is shown during audio-only clips (speed task)."""
         use_video = mode in ("video", "both")
-        use_audio = mode in ("audio", "both")
+        use_audio = mode in ("audio", "both") and self.sounds.get(file) is not None
         proc = reader = channel = None
         stop, done = threading.Event(), threading.Event()
         q = queue.Queue(maxsize=QUEUE_FRAMES)

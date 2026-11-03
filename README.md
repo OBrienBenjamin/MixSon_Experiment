@@ -2,8 +2,8 @@
 
 Perceptual experiments for audio-visual synchronization with sonification:
 
-- `mos_modality.py`: audio-only, video-only and audiovisual clips (three blocks, one per modality).
-- `mos_strategy.py`: audiovisual clips only; one block per sonification strategy.
+- `modality.py`: audio-only, video-only and audiovisual clips (three blocks, one per modality).
+- `strategy.py`: audiovisual clips only; one block per sonification strategy.
 
 Both scripts require the `--parameter` flag, which selects the task and the media:
 
@@ -77,15 +77,15 @@ After unzipping, the `media/` folder must have this structure:
 
 ```
 media/
-├── Audio/    .wav   (mos_modality.py only)
-├── Video/    .mov   (mos_modality.py only)
-└── AV/       .mp4   (mos_modality.py and mos_strategy.py)
+├── Audio/    .wav   (modality.py only)
+├── Video/    .mov   (modality.py only)
+└── AV/       .mp4   (modality.py and strategy.py)
 ```
 
 All files are selected **by name**. `<prefix>` is `Speed` (for `--parameter speed`) or
 `Synch` (for `--parameter synch`), and `<n>` is an integer. Capitalization does not matter.
 
-### `mos_modality.py`
+### `modality.py`
 
 | Folder | File name | Speed example | Synch example |
 |---|---|---|---|
@@ -95,7 +95,7 @@ All files are selected **by name**. `<prefix>` is `Speed` (for `--parameter spee
 
 The suffix is `Step` for `speed` and `Event` for `synch`.
 
-### `mos_strategy.py`
+### `strategy.py`
 
 Only `AV/` is used, and each block (strategy) reads the files carrying its own suffix:
 
@@ -127,12 +127,12 @@ Activate the environment first (`conda activate your_env`), then:
 
 ```bash
 # Modality experiment: choose the task with --parameter
-python mos_modality.py --participant P01 --parameter synch    # MOS rating
-python mos_modality.py --participant P01 --parameter speed    # pairwise comparison
+python modality.py --participant P01 --parameter synch    # MOS rating
+python modality.py --participant P01 --parameter speed    # pairwise comparison
 
 # Strategy experiment
-python mos_strategy.py --participant P01 --parameter synch    # MOS rating
-python mos_strategy.py --participant P01 --parameter speed    # pairwise comparison
+python strategy.py --participant P01 --parameter synch    # MOS rating
+python strategy.py --participant P01 --parameter speed    # pairwise comparison
 ```
 
 Options:
@@ -141,10 +141,10 @@ Options:
 |---|---|
 | `--participant ID` | required: participant identifier, used in the output file names |
 | `--parameter {synch,speed}` | required: which task to run (see below) |
-| `--start-block NAME` | optional: run this block first; the other blocks stay in random order. `mos_modality.py`: `audio`, `video`, `audiovisual`. `mos_strategy.py`: `step`, `osc`, `bpf` (speed) or `event`, `static`, `centroid` (synch) |
+| `--start-block NAME` | optional: run this block first; the other blocks stay in random order. `modality.py`: `audio`, `video`, `audiovisual`. `strategy.py`: `step`, `osc`, `bpf` (speed) or `event`, `static`, `centroid` (synch) |
 | `--seed N` | optional: makes block and trial order reproducible |
 
-Example: `python mos_strategy.py --participant P02 --parameter speed --start-block osc`
+Example: `python strategy.py --participant P02 --parameter speed --start-block osc`
 
 ### The two tasks (both scripts)
 
@@ -163,8 +163,8 @@ presented in random order for every participant):
 
 | | Blocks | Media |
 |---|---|---|
-| `mos_modality.py` | Audio-only, Video-only, Audiovisual | `Audio/`, `Video/`, `AV/` |
-| `mos_strategy.py` | `speed`: Step, OSC, BPF<br>`synch`: Event, Static, Centroid | `AV/` (all blocks audiovisual) |
+| `modality.py` | Audio-only, Video-only, Audiovisual | `Audio/`, `Video/`, `AV/` |
+| `strategy.py` | `speed`: Step, OSC, BPF<br>`synch`: Event, Static, Centroid | `AV/` (all blocks audiovisual) |
 
 A short practice is run before each block. The practice trials are logged with
 `phase = practice` and are not part of the test.
@@ -185,14 +185,14 @@ to auto-hide.
 
 ## Output
 
-Written to `Responses/Modality/` for `mos_modality.py` and `Responses/Strategy/` for `mos_strategy.py` (not tracked by git).
+Written to `Responses/Modality/` for `modality.py` and `Responses/Strategy/` for `strategy.py` (not tracked by git).
 
 | Script | Task | File |
 |---|---|---|
-| `mos_modality.py` | synch | `mos_synch_<participant>_<timestamp>.csv` |
-| `mos_modality.py` | speed | `pairwise_speed_<participant>_<timestamp>.csv` |
-| `mos_strategy.py` | synch | `strategy_mos_synch_<participant>_<timestamp>.csv` |
-| `mos_strategy.py` | speed | `strategy_pairwise_speed_<participant>_<timestamp>.csv` |
+| `modality.py` | synch | `synch_<participant>_<timestamp>.csv` |
+| `modality.py` | speed | `pairwise_speed_<participant>_<timestamp>.csv` |
+| `strategy.py` | synch | `strategy_synch_<participant>_<timestamp>.csv` |
+| `strategy.py` | speed | `strategy_pairwise_speed_<participant>_<timestamp>.csv` |
 | both | both | `<same name>_design.csv`: the planned trial order for that session |
 
 Columns, `--parameter synch`:
@@ -203,8 +203,8 @@ Columns, `--parameter speed`:
 `participant, parameter, block, phase, first, second, pair, response, chosen, status,
 block_order_pos, trial_in_block, trial_global, rt_after_playback_s, timestamp`
 
-- `block` is the modality (Audio, Video, Audiovisual) in `mos_modality.py` and the strategy
-  (Step, OSC, BPF, Event, Static, Centroid) in `mos_strategy.py`.
+- `block` is the modality (Audio, Video, Audiovisual) in `modality.py` and the strategy
+  (Step, OSC, BPF, Event, Static, Centroid) in `strategy.py`.
 - `response` is the rating (1-5) in `synch`, or 1 or 2 (first or second) in `speed`; `chosen` is the
   file that was picked as faster.
 - `phase` is `practice` or `test`; `status` is `completed` or `aborted`.
@@ -214,12 +214,12 @@ Each response is flushed to disk immediately, so data survive crashes.
 
 ## Configuration
 
-Constants at the top of `mos_modality.py` and `mos_strategy.py`:
+Constants at the top of `modality.py` and `strategy.py`:
 
 | Setting | Purpose |
 |---|---|
 | `PARAMETERS` | per-task settings: file prefix, suffix (modality) or strategies (strategy), test clips per block, repetitions (`synch`), practice numbers (`train_ids`, `practice_pairs`), question and instruction text |
-| `BLOCKS` (`mos_modality.py`) | blocks with their folder, mode and file extension |
+| `BLOCKS` (`modality.py`) | blocks with their folder, mode and file extension |
 | `USE_PRACTICE` | turn the practice trials before each block on or off |
 | `ALLOW_MISSING_AUDIO` | `True` plays clips without an audio track silently (for testing only) |
 | `ITI_MS`, `CUE_MS`, `ISI_MS` | fixation, "1"/"2" cue and pause between the two clips (`speed`) |

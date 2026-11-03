@@ -34,7 +34,7 @@ PARAMETERS = {
         "prefix": "synch",
         "strategies": ["Event", "Static", "Centroid"],   # blocks; file suffix is _<Strategy>
         "clips_per_block": 8,    # test clips per block (practice files not counted)
-        "n_reps": 1,
+        "n_reps": 5,
         "train_ids": [75, 400],  # practice clips, played in this order
         "question": "How would you rate the quality of what you just experienced?",
         "instructions": ("Welcome.\n\nEach clip plays automatically. When it ends, rate it "

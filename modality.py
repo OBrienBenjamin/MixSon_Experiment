@@ -36,16 +36,18 @@ BLOCKS = {                       # block name -> (folder, mode, extension, name 
 
 PARAMETERS = {
     "synch": {
-        "task": "mos",
+        "task": "pairwise",
         "prefix": "synch",
         "suffix": "_Event",      # Audio/AV files: synch_<n>_Event (Video: synch_<n>)
-        "clips_per_block": 8,    # test clips per block (practice files not counted)
-        "n_reps": 5,
-        "train_ids": [75, 400],  # practice clips, played in this order
-        "question": "How would you rate the quality of what you just experienced?",
-        "instructions": ("Welcome.\n\nEach clip plays automatically. When it ends, rate it "
-                         "from 1 to 5 using the keyboard.\n\nBefore each block you will do "
-                         "a short practice.\n\nPress SPACE to begin."),
+        "clips_per_block": 6,    # test clips per block (practice files not counted)
+        # "n_reps": 5,
+        "train_ids": [0, 75, 350, 400],
+        "practice_pairs": [(0, 75), (0, 350), (0, 400), (75, 350), (75, 400), (350, 400)],  # practice clips, played in this order
+        "question": "Which service was had better synchronization?",
+        "instructions": ("Welcome.\n\nIn each trial you will perceive two tennis services, one after the "
+                         "other.\n\nAfter the second service, choose which one had better synchronization.\n\nPress 1 for the first service or 2 for the second "
+                         "service.\n\nBefore each block you will do a short practice.\n\n"
+                         "Press SPACE to begin."),
     },
     "speed": {
         "task": "pairwise",
@@ -53,17 +55,17 @@ PARAMETERS = {
         "suffix": "_Step",     # files are named speed_<n>[_text]
         "clips_per_block": 6,    # -> 15 pairs x 2 orders = 30 trials per block
         "train_ids": [32, 34, 50, 53],
-        "practice_pairs": [(32, 50), (34, 53)],     # one practice trial per pair, random AB/BA
-        "question": "Which one was faster at the point of impact?",
-        "instructions": ("Welcome.\n\nIn each trial you will perceive two clips, one after the "
-                         "other.\n\nAfter the second clip, choose which one was faster at the "
-                         "point of impact.\n\nPress 1 for the first clip or 2 for the second "
-                         "clip.\n\nBefore each block you will do a short practice.\n\n"
+        "practice_pairs": [(32, 34), (32, 50), (32, 53), (34, 350), (34, 400), (350, 400)],     # one practice trial per pair, random AB/BA
+        "question": "Which service was faster at the point of impact?",
+        "instructions": ("Welcome.\n\nIn each trial you will perceive two services, one after the "
+                         "other.\n\nAfter the second service, choose which one was faster at the "
+                         "point of impact.\n\nPress 1 for the first service or 2 for the second "
+                         "service.\n\nBefore each block you will do a short practice.\n\n"
                          "Press SPACE to begin."),
     },
 }
 
-SCALE_LABELS = {1: "Bad", 2: "Poor", 3: "Fair", 4: "Good", 5: "Excellent"}      # synch
+SCALE_LABELS = {1: "Bad", 2: "Poor", 3: "Fair", 4: "Good", 5: "Excellent"}      # MOS (no longer in use)
 CHOICE_LABELS = {1: "the FIRST", 2: "the SECOND"}                                # speed
 
 ITI_MS = 500                     # fixation before each trial

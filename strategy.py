@@ -4,7 +4,6 @@ import os
 import re
 import queue
 import random
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -36,10 +35,10 @@ PARAMETERS = {
         "prefix": "synch",
         "suffix": "_Event",      # Audio/AV files: synch_<n>_Event (Video: synch_<n>)
         "clips_per_block": 6,    # test clips per block (practice files not counted)
-        # "n_reps": 5,
+        "strategies": ["event", "static", "centroid"],
         "train_ids": [0, 75, 350, 400],
         "practice_pairs": [(0, 75), (0, 350), (0, 400), (75, 350), (75, 400), (350, 400)],  # practice clips, played in this order
-        "question": "Which service was had better synchronization?",
+        "question": "Which service had better synchronization?",
         "instructions": ("Welcome.\n\nIn each trial you will perceive two tennis services, one after the "
                          "other.\n\nAfter the second service, choose which one had better synchronization.\n\nPress 1 for the first service or 2 for the second "
                          "service.\n\nBefore each block you will do a short practice.\n\n"
@@ -50,8 +49,9 @@ PARAMETERS = {
         "prefix": "speed",
         "suffix": "_Step",     # files are named speed_<n>[_text]
         "clips_per_block": 6,    # -> 15 pairs x 2 orders = 30 trials per block
+        "strategies": ["step", "osc", "bpf"],
         "train_ids": [32, 34, 50, 53],
-        "practice_pairs": [(32, 34), (32, 50), (32, 53), (34, 350), (34, 400), (350, 400)],     # one practice trial per pair, random AB/BA
+        "practice_pairs": [(32, 34), (32, 50), (32, 53), (34, 50), (34, 53), (50, 53)],     # one practice trial per pair, random AB/BA
         "question": "Which service was faster at the point of impact?",
         "instructions": ("Welcome.\n\nIn each trial you will perceive two services, one after the "
                          "other.\n\nAfter the second service, choose which one was faster at the "
@@ -75,13 +75,13 @@ PREBUFFER_FRAMES = 15            # frames to have ready before playback starts
 MIXER_FREQ = 44100               # set to your files' sample rate (e.g. 48000) to avoid conversion
 MIXER_BUFFER = 512               # smaller = lower audio latency
 
-MOS_COLUMNS = ["participant", "parameter", "block", "phase", "stimulus", "repetition",
+MOS_COLUMNS = ["participant", "age", "sex", "level", "parameter", "block", "phase", "stimulus", "repetition",
                "response", "status", "block_order_pos", "trial_in_block", "trial_global",
                "rt_after_playback_s", "timestamp"]
-PAIRWISE_COLUMNS = ["participant", "parameter", "block", "phase", "first", "second", "pair",
+PAIRWISE_COLUMNS = ["participant", "age", "sex", "level", "parameter", "block", "phase", "first", "second", "pair",
                     "response", "chosen", "status", "block_order_pos", "trial_in_block",
                     "trial_global", "rt_after_playback_s", "timestamp"]
-DESIGN_COLUMNS = ["participant", "parameter", "block_order_pos", "block", "phase",
+DESIGN_COLUMNS = ["participant", "age", "sex", "level", "parameter", "block_order_pos", "block", "phase",
                   "trial_in_block", "repetition", "stimulus_1", "stimulus_2"]
 # ------------------------------------------------
 
@@ -180,13 +180,16 @@ def frame_reader(proc, frame_bytes, q, stop, done):
 
 
 class Experiment:
-    def __init__(self, participant, parameter, seed=None, start_block=None):
+    def __init__(self, participant, age, sex, level, parameter, seed=None, start_block=None):
         self.ffmpeg = find_ffmpeg()
         if not self.ffmpeg:
             raise SystemExit("ffmpeg not found. Run: pip install imageio-ffmpeg "
                             "(or place ffmpeg in a 'bin' folder next to the app).")
 
         self.participant = participant
+        self.age = age
+        self.sex = sex
+        self.level = level
         self.parameter = parameter
         self.cfg = PARAMETERS[parameter]
         self.kind = self.cfg["task"]                       # "mos" or "pairwise"
@@ -195,7 +198,7 @@ class Experiment:
 
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = f"strategy_{self.kind}_{parameter}_{participant}_{stamp}"
+        prefix = f"{self.kind}_{parameter}_{participant}_{stamp}"
         self.out_path = RESULTS_DIR / f"{prefix}.csv"
         self.design_path = RESULTS_DIR / f"{prefix}_design.csv"
 
@@ -290,7 +293,7 @@ class Experiment:
                 for i, t in enumerate(trials, 1):
                     clips = t["clips"]
                     append_row_safely(self.design_path, [
-                        self.participant, self.parameter, b["pos"], b["name"], phase, i,
+                        self.participant, self.age, self.sex, self.level, self.parameter, b["pos"], b["name"], phase, i,
                         t["rep"] if phase == "test" else "",
                         clips[0].name, clips[1].name if len(clips) > 1 else ""])
 
@@ -564,13 +567,13 @@ class Experiment:
         rt_s = "" if rt is None else f"{rt:.3f}"
         ts = datetime.now().isoformat(timespec="seconds")
         if self.kind == "mos":
-            row = [self.participant, self.parameter, self.block["name"], c["phase"],
+            row = [self.participant, self.age, self.sex, self.level, self.parameter, self.block["name"], c["phase"],
                    c["clips"][0].name, c["rep"] if is_test else "", response, status,
                    self.block["pos"], c["trial"], c["global"], rt_s, ts]
         else:
             first, second = c["clips"]
             chosen = "" if response == "" else (first if response == 1 else second).name
-            row = [self.participant, self.parameter, self.block["name"], c["phase"],
+            row = [self.participant, self.age, self.sex, self.level, self.parameter, self.block["name"], c["phase"],
                    first.name, second.name, pair_label(first, second), response, chosen,
                    status, self.block["pos"], c["trial"], c["global"], rt_s, ts]
         append_row_safely(self.out_path, row)
@@ -596,6 +599,9 @@ class Experiment:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--participant", required=True)
+    ap.add_argument("--age", required=True)
+    ap.add_argument("--sex", required=True)
+    ap.add_argument("--level", required=True)
     ap.add_argument("--parameter", required=True, type=str.lower, choices=sorted(PARAMETERS),
                     help="synch = MOS rating test; speed = pairwise comparison test")
     ap.add_argument("--start-block", type=str.lower, default=None,
@@ -608,4 +614,4 @@ if __name__ == "__main__":
     if args.start_block and args.start_block not in valid:
         ap.error(f"--start-block for '{args.parameter}' must be one of: {', '.join(valid)}")
 
-    Experiment(args.participant, args.parameter, args.seed, args.start_block).run()
+    Experiment(args.participant, args.age, args.sex, args.level, args.parameter, args.seed, args.start_block).run()

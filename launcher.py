@@ -10,7 +10,7 @@ import modality
 import strategy
 
 EXPERIMENTS = [("Modality", modality), ("Strategy", strategy)]
-PARAMETERS = [("Synch", "synch", "MOS rating 1-5"),
+PARAMETERS = [("Synch", "synch", "pairwise comparison"),
               ("Speed", "speed", "pairwise comparison")]
 
 BG, FG, DIM, ACCENT, ERR = (20, 20, 20), (235, 235, 235), (140, 140, 140), (90, 170, 255), (255, 130, 130)
@@ -29,15 +29,19 @@ def draw_menu(screen, fonts, st):
     big, mid, small = fonts
     W, _ = screen.get_size()
     screen.fill(BG)
-    t = big.render("MixSon experiments", True, FG)
+    t = big.render("MixSon Experiments", True, FG)
     screen.blit(t, ((W - t.get_width()) // 2, 40))
 
     cursor = "_" if st["field"] == 0 and (pygame.time.get_ticks() // 500) % 2 == 0 else ""
     exp_name = EXPERIMENTS[st["exp"]][0]
     par_name, _, par_desc = PARAMETERS[st["par"]]
     rows = [("Participant ID", st["id"] + cursor),
+            ("Participant Age", st["age"] + cursor),
+            ("Participant Sex", st["sex"] + cursor),
+            ("Participant Level", st["level"] + cursor),
             ("Experiment", f"<   {exp_name}   >"),
-            ("Parameter", f"<   {par_name}  ({par_desc})   >")]
+            # ("Parameter", f"<   {par_name}  ({par_desc})   >")] # exclude as always pairwise
+            ("Parameter", f"<   {par_name}   >")]
     y = 140
     for i, (label, value) in enumerate(rows):
         screen.blit(mid.render(label, True, DIM), (70, y))
@@ -46,7 +50,7 @@ def draw_menu(screen, fonts, st):
 
     hint = small.render("Tab / Up / Down: next field     Left / Right: change     "
                         "Enter: start     Esc: quit", True, DIM)
-    screen.blit(hint, ((W - hint.get_width()) // 2, 370))
+    screen.blit(hint, ((W - hint.get_width()) // 2, 70))
 
     if st["msg"]:
         lines = []
@@ -60,6 +64,8 @@ def draw_menu(screen, fonts, st):
 
 def menu(screen, fonts, st):
     clock = pygame.time.Clock()
+    NUM_FIELDS = 6  # ID, Age, Sex, Level, Experiment, Parameter
+    
     while True:
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
@@ -69,37 +75,49 @@ def menu(screen, fonts, st):
             if e.key == pygame.K_ESCAPE:
                 return None
             elif e.key in (pygame.K_TAB, pygame.K_DOWN):
-                st["field"] = (st["field"] + 1) % 3
+                st["field"] = (st["field"] + 1) % NUM_FIELDS
             elif e.key == pygame.K_UP:
-                st["field"] = (st["field"] - 1) % 3
+                st["field"] = (st["field"] - 1) % NUM_FIELDS
             elif e.key in (pygame.K_LEFT, pygame.K_RIGHT):
                 step = -1 if e.key == pygame.K_LEFT else 1
-                if st["field"] == 1:
+                if st["field"] == 4:  # Experiment
                     st["exp"] = (st["exp"] + step) % len(EXPERIMENTS)
-                elif st["field"] == 2:
+                elif st["field"] == 5:  # Parameter
                     st["par"] = (st["par"] + step) % len(PARAMETERS)
             elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                pid = st["id"].strip()
-                if not pid:
+                participant = st["id"].strip()
+                age = st["age"].strip()
+                sex = st["sex"].strip()
+                level = st["level"].strip()
+                
+                if not participant:
                     st["msg"], st["field"] = "Please enter a participant ID.", 0
                 elif not (app_dir() / "media").is_dir():
                     st["msg"] = f"Media folder not found. It must be here:\n{app_dir() / 'media'}"
                 else:
                     st["msg"] = ""
-                    return pid, EXPERIMENTS[st["exp"]][1], PARAMETERS[st["par"]][1]
+                    # Return all collected demographic data alongside experiment choices
+                    return participant, age, sex, level, EXPERIMENTS[st["exp"]][1], PARAMETERS[st["par"]][1]
             elif e.key == pygame.K_BACKSPACE:
-                if st["field"] == 0:
-                    st["id"] = st["id"][:-1]
-            elif (st["field"] == 0 and e.unicode and e.unicode.isascii()
-                  and (e.unicode.isalnum() or e.unicode in "_-") and len(st["id"]) < 32):
-                st["id"] += e.unicode
+                # Handle text deletion for string fields
+                field_keys = ["id", "age", "sex", "level"]
+                if st["field"] < len(field_keys):
+                    key = field_keys[st["field"]]
+                    st[key] = st[key][:-1]
+            elif (st["field"] < 4 and e.unicode and e.unicode.isascii()
+                  and (e.unicode.isalnum() or e.unicode in "_- ") and len(st[list(st.keys())[st["field"]]]) < 32):
+                # Handle text typing for the first 4 fields (ID, Age, Sex, Level)
+                field_keys = ["id", "age", "sex", "level"]
+                key = field_keys[st["field"]]
+                st[key] += e.unicode
+                
         draw_menu(screen, fonts, st)
         pygame.display.flip()
         clock.tick(30)
 
 
 def main():
-    st = {"id": "", "field": 0, "exp": 0, "par": 0, "msg": ""}
+    st = {"id": "", "age": "", "sex": "", "level": "", "field": 0, "exp": 0, "par": 0, "msg": ""}
     while True:
         pygame.init()
         screen = pygame.display.set_mode((900, 520))
@@ -109,11 +127,14 @@ def main():
         pygame.quit()
         if choice is None:
             return
-        pid, module, parameter = choice
+        
+        # Unpack all returned values
+        participant, age, sex, level, module, parameter = choice
         st["msg"] = ""
         try:
-            module.Experiment(pid, parameter).run()
-        except SystemExit as e:                      # e.g. missing or misnamed files
+            # Pass additional demographics to your Experiment if needed (e.g., as part of parameter or separate arguments)
+            module.Experiment(participant, age, sex, level, parameter).run()
+        except SystemExit as e:                      
             if isinstance(e.code, str):
                 st["msg"] = e.code
                 log_error(e.code)

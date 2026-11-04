@@ -4,7 +4,6 @@ import os
 import re
 import queue
 import random
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -40,7 +39,6 @@ PARAMETERS = {
         "prefix": "synch",
         "suffix": "_Event",      # Audio/AV files: synch_<n>_Event (Video: synch_<n>)
         "clips_per_block": 6,    # test clips per block (practice files not counted)
-        # "n_reps": 5,
         "train_ids": [0, 75, 350, 400],
         "practice_pairs": [(0, 75), (0, 350), (0, 400), (75, 350), (75, 400), (350, 400)],  # practice clips, played in this order
         "question": "Which service was had better synchronization?",
@@ -55,7 +53,7 @@ PARAMETERS = {
         "suffix": "_Step",     # files are named speed_<n>[_text]
         "clips_per_block": 6,    # -> 15 pairs x 2 orders = 30 trials per block
         "train_ids": [32, 34, 50, 53],
-        "practice_pairs": [(32, 34), (32, 50), (32, 53), (34, 350), (34, 400), (350, 400)],     # one practice trial per pair, random AB/BA
+        "practice_pairs": [(32, 34), (32, 50), (32, 53), (34, 50), (34, 53), (50, 53)],     # one practice trial per pair, random AB/BA
         "question": "Which service was faster at the point of impact?",
         "instructions": ("Welcome.\n\nIn each trial you will perceive two services, one after the "
                          "other.\n\nAfter the second service, choose which one was faster at the "
@@ -184,13 +182,16 @@ def frame_reader(proc, frame_bytes, q, stop, done):
 
 
 class Experiment:
-    def __init__(self, participant, parameter, seed=None, start_block=None):
+    def __init__(self, participant, age, sex, level, parameter, seed=None, start_block=None):
         self.ffmpeg = find_ffmpeg()
         if not self.ffmpeg:
             raise SystemExit("ffmpeg not found. Run: pip install imageio-ffmpeg "
                             "(or place ffmpeg in a 'bin' folder next to the app).")
 
         self.participant = participant
+        self.age = age
+        self.sex = sex
+        self.level = level
         self.parameter = parameter
         self.cfg = PARAMETERS[parameter]
         self.kind = self.cfg["task"]                       # "mos" or "pairwise"

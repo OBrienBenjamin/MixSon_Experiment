@@ -1,0 +1,44 @@
+name: Build apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, name: windows }
+          - { os: macos-15-intel, name: mac-intel }
+          - { os: macos-latest,   name: mac-apple-silicon }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install pygame==2.6.1 imageio-ffmpeg pyinstaller
+      - name: Build
+        run: pyinstaller --noconfirm --clean --name MixSon --windowed --collect-all imageio_ffmpeg launcher.py
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/MixSon.app MixSon-${{ matrix.name }}.zip
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/MixSon -DestinationPath MixSon-${{ matrix.name }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MixSon-${{ matrix.name }}
+          path: MixSon-${{ matrix.name }}.zip
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: MixSon-${{ matrix.name }}.zip

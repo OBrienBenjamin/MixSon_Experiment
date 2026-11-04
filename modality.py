@@ -14,13 +14,15 @@ from datetime import datetime
 from itertools import combinations
 from pathlib import Path
 
+from appdir import app_dir, find_ffmpeg, probe_video, has_audio_stream
+
 try:
     import pygame
 except ImportError:
     raise SystemExit("Missing package: pygame. Install with:\n  pip install pygame")
 
 # ---------------- configuration ----------------
-HERE = Path(__file__).resolve().parent
+HERE = app_dir()
 MEDIA_ROOT = HERE / "media"                        # media/<Audio|AV|Video>/<speed|synch>_<n>[_text].<ext>
 RESULTS_DIR = HERE / "Responses" / "Modality"
 USE_PRACTICE = True
@@ -162,33 +164,6 @@ def wav_is_usable_directly(path):
     except Exception:
         return False
 
-
-def has_audio_stream(ffprobe, path):
-    out = subprocess.run(
-        [ffprobe, "-v", "error", "-select_streams", "a:0",
-         "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True)
-    return bool(out.stdout.strip())
-
-
-def probe_video(ffprobe, path):
-    """Return (width, height, fps) of the first video stream."""
-    out = subprocess.run(
-        [ffprobe, "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height,avg_frame_rate",
-         "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True)
-    try:
-        w, h, rate = out.stdout.strip().split(",")[:3]
-        num, _, den = rate.partition("/")
-        fps = float(num) / float(den or 1)
-        if fps <= 0:
-            fps = 25.0
-        return int(w), int(h), fps
-    except Exception:
-        raise SystemExit(f"Could not read video info from {path}\n{out.stderr}")
-
-
 def frame_reader(proc, frame_bytes, q, stop, done):
     """Background thread: read raw frames from ffmpeg into a bounded queue."""
     try:
@@ -208,11 +183,10 @@ def frame_reader(proc, frame_bytes, q, stop, done):
 
 class Experiment:
     def __init__(self, participant, parameter, seed=None, start_block=None):
-        self.ffmpeg = shutil.which("ffmpeg")
-        self.ffprobe = shutil.which("ffprobe")
-        if not (self.ffmpeg and self.ffprobe):
-            raise SystemExit("ffmpeg/ffprobe not found on PATH. Activate your conda env or:\n"
-                             "  conda install -c conda-forge ffmpeg")
+        self.ffmpeg = find_ffmpeg()
+        if not self.ffmpeg:
+            raise SystemExit("ffmpeg not found. Run: pip install imageio-ffmpeg "
+                            "(or place ffmpeg in a 'bin' folder next to the app).")
 
         self.participant = participant
         self.parameter = parameter
@@ -328,7 +302,7 @@ class Experiment:
     def _prepare_audio(self, path):
         if wav_is_usable_directly(path):
             return pygame.mixer.Sound(str(path))
-        if not has_audio_stream(self.ffprobe, path):
+        if not has_audio_stream(self.ffmpeg, path):
             if ALLOW_MISSING_AUDIO:
                 print(f"[warning] no audio track in {path}; it will play silently")
                 return None
@@ -342,7 +316,7 @@ class Experiment:
         return pygame.mixer.Sound(str(out))
 
     def _prepare_video(self, path):
-        w, h, fps = probe_video(self.ffprobe, path)
+        w, h, fps = probe_video(self.ffmpeg, path)
         scale = min(self.W / w, self.H / h)
         nw = max(2, int(w * scale) // 2 * 2)
         nh = max(2, int(h * scale) // 2 * 2)

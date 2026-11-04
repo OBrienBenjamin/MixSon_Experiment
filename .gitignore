@@ -1,9 +1,14 @@
-# participant data: do NOT commit
-results/*
-!results/.gitkeep
+# participant data and stimuli: never commit
+Responses/
+media/
+
+# build output
+build/
+dist/
+*.spec
 
 # python / OS
 __pycache__/
 *.pyc
 .DS_Store
-.venv/media/
+.venv/

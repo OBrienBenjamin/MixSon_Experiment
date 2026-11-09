@@ -35,34 +35,54 @@ PARAMETERS = {
         "prefix": "synch",
         "suffix": "_Event",      # Audio/AV files: synch_<n>_Event (Video: synch_<n>)
         "clips_per_block": 6,    # test clips per block (practice files not counted)
-        "strategies": ["event", "static", "centroid"],
         "train_ids": [0, 75, 350, 400],
         "practice_pairs": [(0, 75), (0, 350), (0, 400), (75, 350), (75, 400), (350, 400)],  # practice clips, played in this order
-        "question": "Which service had better synchronization?",
-        "instructions": ("Welcome.\n\nIn each trial you will perceive two tennis services, one after the "
-                         "other.\n\nAfter the second service, choose which one had better synchronization.\n\nPress 1 for the first service or 2 for the second "
-                         "service.\n\nBefore each block you will do a short practice.\n\n"
-                         "Press SPACE to begin."),
+        "question": "Quel service présente, selon vous,\nla meilleure synchronisation entre \nla flexion maximale du genou et \nla position verticale maximale de la tête de raquette ?",
+        "instructions": [
+            # Page 1: the task
+            ("Pour chaque essai expérimental, deux services vous seront successivement présentés.\n\n"
+            "Après avoir visionné le second service,\nvous devrez dire lequel des deux présentait\n"
+            "la meilleure synchronisation temporelle entre\n"
+            "la flexion maximale du genou et\n la position verticale maximale de la tête de raquette."),
+
+            # Page 2: how to answer
+            ("Si vous pensez que c'est le service 1, tapez 1.\n\n"
+            "Si vous pensez que c'est le service 2, tapez 2."),
+
+            # Page 3: practice, then start
+            ("Avant chaque bloc expérimental, un court entrainement avec des services qui ne seront pas "
+            "présentés pendant les essais expérimentaux, vous sera proposé afin de vous familiariser "
+            "avec les consignes et avec les modalités de réponse."),
+        ]
     },
     "speed": {
         "task": "pairwise",
         "prefix": "speed",
         "suffix": "_Step",     # files are named speed_<n>[_text]
         "clips_per_block": 6,    # -> 15 pairs x 2 orders = 30 trials per block
-        "strategies": ["step", "osc", "bpf"],
         "train_ids": [32, 34, 50, 53],
         "practice_pairs": [(32, 34), (32, 50), (32, 53), (34, 50), (34, 53), (50, 53)],     # one practice trial per pair, random AB/BA
-        "question": "Which service was faster at the point of impact?",
-        "instructions": ("Welcome.\n\nIn each trial you will perceive two services, one after the "
-                         "other.\n\nAfter the second service, choose which one was faster at the "
-                         "point of impact.\n\nPress 1 for the first service or 2 for the second "
-                         "service.\n\nBefore each block you will do a short practice.\n\n"
-                         "Press SPACE to begin."),
+        "question": "Quel service a la vitesse de tête de raquette à l'impact la plus élevée ?",
+        "instructions": [
+            # Page 1: the task
+            ("Pour chaque essai expérimental, deux services vous seront successivement présentés.\n\n"
+            "Après avoir visionné le second service, vous devrez dire lequel des deux présentait "
+            "la vitesse de tête de raquette la plus élevée au moment de l'impact avec la balle."),
+
+            # Page 2: how to answer
+            ("Si vous pensez que c'est le service 1, tapez 1.\n\n"
+            "Si vous pensez que c'est le service 2, tapez 2."),
+
+            # Page 3: practice, then start
+            ("Avant chaque bloc expérimental, un court entrainement avec des services qui ne seront pas "
+            "présentés pendant les essais expérimentaux, vous sera proposé afin de vous familiariser "
+            "avec les consignes et avec les modalités de réponse."),
+        ],
     },
 }
 
 SCALE_LABELS = {1: "Bad", 2: "Poor", 3: "Fair", 4: "Good", 5: "Excellent"}      # MOS (no longer in use)
-CHOICE_LABELS = {1: "the FIRST", 2: "the SECOND"}                                # speed
+CHOICE_LABELS = {1: "le PREMIÈRE", 2: "le DEUXIÈME"}                                # speed
 
 ITI_MS = 500                     # fixation before each trial
 CUE_MS = 500                     # speed only: "1" / "2" cue before each clip
@@ -178,6 +198,8 @@ def frame_reader(proc, frame_bytes, q, stop, done):
     finally:
         done.set()
 
+def get_strategies(cfg):
+    return list(cfg.get("strategies") or [cfg["suffix"].lstrip("_")])
 
 class Experiment:
     def __init__(self, participant, age, sex, level, parameter, seed=None, start_block=None):
@@ -247,8 +269,7 @@ class Experiment:
 
     def _make_plan(self):
         prefix = self.cfg["prefix"]
-        block_names = list(self.cfg["strategies"])                 # one block per strategy
-        self.rng.shuffle(block_names)
+        block_names = get_strategies(self.cfg)             # one block per strategy        self.rng.shuffle(block_names)
         if self.start_block:                                       # force this block to come first
             first = next(n for n in block_names if n.lower() == self.start_block)
             block_names.remove(first)
@@ -297,6 +318,16 @@ class Experiment:
                         t["rep"] if phase == "test" else "",
                         clips[0].name, clips[1].name if len(clips) > 1 else ""])
 
+    def show_instructions(self, instructions):
+        # accept the old single-string format too
+        pages = [instructions] if isinstance(instructions, str) else instructions
+        for i, page in enumerate(pages):
+            if i < len(pages) - 1:
+                footer = "Pressez la barre d'espace pour continuer"
+            else:
+                footer = "Pressez la barre d'espace pour commencer"
+            self.wait_space(f"{page}\n\n{footer}")
+            
     # ---------- stimulus preparation ----------
     def _prepare_audio(self, path):
         if wav_is_usable_directly(path):
@@ -532,29 +563,29 @@ class Experiment:
     def run(self):
         try:
             self.prepare()
-            self.wait_space(self.cfg["instructions"])
+            self.show_instructions(self.cfg["instructions"])
             n_blocks = len(self.plan)
             for bi, block in enumerate(self.plan):
                 self.block = block
                 if block["practice"]:
-                    self.wait_space(f"Block {bi + 1} of {n_blocks}.\n\n"
-                                    f"First, {len(block['practice'])} practice trials to get used "
-                                    "to the task. They are not part of the test.\n\n"
-                                    "Press SPACE to start the practice.")
+                    self.wait_space(f"Block {bi + 1} sur {n_blocks}.\n\n"
+                                    f"Commencez par {len(block['practice'])} essais d'entraînement pour vous familiariser "
+                                    "avec la tâche. Ils ne font pas partie du test.\n\n"
+                                    "Appuyez sur la barre d'espace pour commencer l'entraînement.")
                     for i, trial in enumerate(block["practice"], 1):
                         self.run_trial(trial, "practice", i)
-                    self.wait_space("Practice finished.\n\nThe test block starts now.\n\n"
-                                    "Press SPACE to continue.")
+                    self.wait_space("L'entraînement est terminé.\n\nLa série de tests commence maintenant.\n\n"
+                                    "Appuyez sur la barre d’espace pour continuer.")
                 else:
-                    self.wait_space(f"Block {bi + 1} of {n_blocks}.\n\nPress SPACE to begin.")
+                    self.wait_space(f"Block {bi + 1} sur {n_blocks}.\n\nAppuyez sur la barre d’espace pour commencer.")
 
                 for i, trial in enumerate(block["trials"], 1):
                     self.run_trial(trial, "test", i)
 
                 if bi < n_blocks - 1:
-                    self.wait_space(f"Block {bi + 1} of {n_blocks} complete.\n\n"
-                                    "Take a short break.\nPress SPACE to continue.")
-            self.wait_space("Experiment finished. Thank you!\n\nPress SPACE to exit.")
+                    self.wait_space(f"Block {bi + 1} sur {n_blocks} est terminé.\n\n"
+                                    "Faites une petite pause. Appuyez sur la barre d’espace pour continuer.")
+            self.wait_space("L’expérience est terminée. Merci ! Appuyez sur la barre d’espace pour quitter.")
         except Abort:
             pass
         finally:

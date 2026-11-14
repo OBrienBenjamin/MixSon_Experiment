@@ -243,6 +243,6 @@ of each parameter). `strategy.py`: `STRATEGIES` (blocks of each parameter).
 - **Choppy video**: re-encode clips to H.264, 720p or 1080p, 25-30 fps, or lower `CANVAS`.
 - **Dock/menu bar visible (macOS)**: set the Dock to auto-hide during sessions.
 
-## Licence / stimuli
+## Stimuli
 
-Licence: coming soon. Stimuli: available on request.
+Stimuli are available on request.

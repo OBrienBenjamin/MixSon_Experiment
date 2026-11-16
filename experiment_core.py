@@ -27,7 +27,8 @@ from datetime import datetime
 from itertools import combinations
 from pathlib import Path
 
-from appdir import app_dir, find_ffmpeg, probe_video, has_audio_stream
+from appdir import (app_dir, find_ffmpeg, probe_video, has_audio_stream,
+                    run_quiet, popen_quiet)
 
 try:
     import pygame
@@ -54,7 +55,7 @@ PARAMETERS = {
     "synch": {
         "prefix": "synch",
         "test_ids": [50, 100, 150, 240, 350],
-        "foil_ids": [0, 75, 200, 300, 400], # # # 6 ms is replaced by 0 ms due to media naming
+        "foil_ids": [6, 75, 200, 300, 400],
         "question": "Quel service présente, selon vous,\nla meilleure synchronisation entre \n"
                     "la flexion maximale du genou et \nla position verticale maximale de la tête de raquette ?",
         "instructions": [
@@ -338,9 +339,11 @@ class BaseExperiment:
                              "Re-export it with audio (needed for the audiovisual block), "
                              "or set ALLOW_MISSING_AUDIO = True to play it silently.")
         out = Path(self.tmpdir.name) / f"clip_{len(self.sounds)}.wav"   # unique name per clip
-        subprocess.run([self.ffmpeg, "-y", "-loglevel", "error", "-i", str(path), "-vn",
-                        "-ac", "2", "-ar", str(MIXER_FREQ), "-acodec", "pcm_s16le", str(out)],
-                       check=True)
+        res = run_quiet([self.ffmpeg, "-nostdin", "-y", "-loglevel", "error", "-i", str(path), "-vn",
+                         "-ac", "2", "-ar", str(MIXER_FREQ), "-acodec", "pcm_s16le", str(out)],
+                        capture_output=True, text=True, errors="replace", timeout=120)
+        if res.returncode != 0:
+            raise SystemExit(f"ffmpeg could not extract the audio of {path}:\n{res.stderr[-400:]}")
         return pygame.mixer.Sound(str(out))
 
     def _prepare_video(self, path):
@@ -351,17 +354,26 @@ class BaseExperiment:
         return {"w": nw, "h": nh, "fps": fps}
 
     def prepare(self):
-        self.draw_text("Preparing stimuli…")
+        todo = []
         for block in self.plan:
             files = set()
             for trial in block["practice"] + block["trials"]:
                 files.update(item.path for item in trial)
-            for f in sorted(files):
-                if block["mode"] in ("audio", "both") and f not in self.sounds:
-                    self.sounds[f] = self._prepare_audio(f)
-                if block["mode"] in ("video", "both") and f not in self.video_info:
-                    self.video_info[f] = self._prepare_video(f)
-                self.pump()
+            todo += [(block["mode"], f) for f in sorted(files)]
+
+        # prepare_log.txt lists every file as it is prepared: if preparation ever stalls,
+        # the last line shows which file it was working on
+        log = self.results_dir / "prepare_log.txt"
+        log.write_text("", encoding="utf-8")
+        for n, (mode, f) in enumerate(todo, 1):
+            self.draw_text(f"Preparing stimuli… {n}/{len(todo)}")
+            self.pump()
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(f"{n}/{len(todo)} {mode} {f}\n")
+            if mode in ("audio", "both") and f not in self.sounds:
+                self.sounds[f] = self._prepare_audio(f)
+            if mode in ("video", "both") and f not in self.video_info:
+                self.video_info[f] = self._prepare_video(f)
 
     # ---------- drawing / input ----------
     def wrap(self, text):
@@ -437,8 +449,8 @@ class BaseExperiment:
                 fps, nw, nh = info["fps"], info["w"], info["h"]
                 frame_bytes = nw * nh * 3
                 pos = ((self.W - nw) // 2, (self.H - nh) // 2)
-                proc = subprocess.Popen(
-                    [self.ffmpeg, "-loglevel", "error", "-i", str(file), "-an",
+                proc = popen_quiet(
+                    [self.ffmpeg, "-nostdin", "-loglevel", "error", "-i", str(file), "-an",
                      "-vf", f"fps={fps:.6f},scale={nw}:{nh}:flags=bilinear",
                      "-pix_fmt", "rgb24", "-f", "rawvideo", "-"],
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,

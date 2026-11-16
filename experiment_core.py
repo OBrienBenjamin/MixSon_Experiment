@@ -55,7 +55,7 @@ PARAMETERS = {
     "synch": {
         "prefix": "synch",
         "test_ids": [50, 100, 150, 240, 350],
-        "foil_ids": [6, 75, 200, 300, 400],
+        "foil_ids": [0, 75, 200, 300, 400],
         "question": "Quel service présente, selon vous,\nla meilleure synchronisation entre \n"
                     "la flexion maximale du genou et \nla position verticale maximale de la tête de raquette ?",
         "instructions": [

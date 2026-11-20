@@ -4,12 +4,12 @@ Task: two-alternative forced choice. Each trial plays two clips one after the ot
 (first / second) and the participant says which one has the better synchronisation
 (parameter "synch") or the higher racket-head speed at impact (parameter "speed").
 
-Design (per block)
-  * every TEST item is compared with every FOIL item   -> 5 x 5 = 25 pairs
-  * every pair is shown in both orders (AB and BA)     -> 50 trials, in random order
-Practice (before each block)
-  * only FOIL items are used (no test item is ever shown in practice)
-  * after PRACTICE_MIN trials the participant can skip to the experimental trials
+Supported pair versions:
+- "v1" (legacy): every TEST item is compared with every FOIL item (5 x 5 = 25 pairs),
+  each in both orders (AB and BA) -> 50 trials; practice uses foil-only combinations.
+- "v2" (explicit pairs): no test/foil logic. Uses explicit pairs per parameter shown
+  in both orders (AB and BA) -> 50 trials, and fixed practice pairs from excluded stimuli
+  that never overlap with test pairs (shown in a fixed order across participants).
 """
 import argparse
 import csv
@@ -43,35 +43,30 @@ USE_PRACTICE = True
 PRACTICE_MIN = 5                 # practice trials before the participant may skip to the test
 ALLOW_MISSING_AUDIO = False      # True = play clips without an audio track silently (testing only)
 
-# Stimulus numbers (the <n> in the file names) and texts of each parameter.
-# Test and foil sets must not overlap.
+DEFAULT_PAIR_VERSION = "v1"
+
 _PAGE_ANSWER = ("Si vous pensez que c'est le service 1, tapez 1.\n\n"
                 "Si vous pensez que c'est le service 2, tapez 2.")
 _PAGE_PRACTICE = ("Avant chaque bloc expérimental, un court entrainement avec des services qui ne seront pas "
                   "présentés pendant les essais expérimentaux, vous sera proposé afin de vous familiariser "
                   "avec les consignes et avec les modalités de réponse.")
 
-PARAMETERS = {
+_PARAMETER_TEXTS = {
     "synch": {
         "prefix": "synch",
-        "test_ids": [50, 100, 150, 240, 350],
-        "foil_ids": [0, 75, 200, 300, 400],
         "question": "Quel service présente, selon vous,\nla meilleure synchronisation entre \n"
                     "la flexion maximale du genou et \nla position verticale maximale de la tête de raquette ?",
         "instructions": [
-            # Page 1: the task
             ("Pour chaque essai expérimental, deux services vous seront successivement présentés.\n\n"
              "Après avoir visionné le second service,\nvous devrez dire lequel des deux présentait\n"
              "la meilleure synchronisation temporelle entre\n"
              "la flexion maximale du genou et\n la position verticale maximale de la tête de raquette."),
-            _PAGE_ANSWER,        # Page 2: how to answer
-            _PAGE_PRACTICE,      # Page 3: practice, then start
+            _PAGE_ANSWER,
+            _PAGE_PRACTICE,
         ],
     },
     "speed": {
         "prefix": "speed",
-        "test_ids": [34, 39, 41, 45, 50],
-        "foil_ids": [32, 37, 43, 47, 53],
         "question": "Quel service a la vitesse de tête de raquette à l'impact la plus élevée ?",
         "instructions": [
             ("Pour chaque essai expérimental, deux services vous seront successivement présentés.\n\n"
@@ -83,35 +78,162 @@ PARAMETERS = {
     },
 }
 
+# Explicit pair lists for v2 (25 pairs each; shown in both AB and BA orders = 50 trials)
+V2_SYNCH_PAIRS = [
+    (0, 50),
+    (50, 100),
+    (100, 150),
+    (200, 240),
+    (350, 400),
+    (0, 100),
+    (50, 150),
+    (200, 300),
+    (240, 350),
+    (300, 400),
+    (0, 150),
+    (50, 200),
+    (150, 300),
+    (200, 350),
+    (240, 400),
+    (0, 200),
+    (50, 240),
+    (100, 300),
+    (150, 350),
+    (200, 400),
+    (0, 240),
+    (0, 240),
+    (50, 300),
+    (100, 350),
+    (150, 400),
+]
+
+V2_SPEED_PAIRS = [
+    (37, 39),
+    (39, 41),
+    (41, 43),
+    (43, 45),
+    (45, 47),
+    (37, 41),
+    (37, 41),
+    (39, 43),
+    (41, 45),
+    (43, 47),
+    (37, 43),
+    (39, 45),
+    (39, 45),
+    (41, 47),
+    (47, 53),
+    (37, 45),
+    (39, 47),
+    (39, 47),
+    (45, 53),
+    (45, 53),
+    (37, 47),
+    (37, 47),
+    (43, 53),
+    (43, 53),
+    (43, 53),
+]
+
+# Fixed practice pairs for v2 (excluded stimuli strictly non-overlapping with test pairs)
+V2_FIXED_PRACTICE_PAIRS = {
+    "synch": [
+        (0, 75),
+        (75, 0),
+        (0, 75),
+        (75, 0),
+        (0, 75),
+        (75, 0),
+    ],
+    "speed": [
+        (32, 34),
+        (34, 50),
+        (50, 32),
+        (32, 50),
+        (34, 32),
+        (50, 34),
+    ],
+}
+
+PAIR_VERSIONS = {
+    "v1": {
+        "mode": "grid",
+        "parameters": {
+            "synch": {
+                **_PARAMETER_TEXTS["synch"],
+                "test_ids": [50, 100, 150, 240, 350],
+                "foil_ids": [0, 75, 200, 300, 400],
+            },
+            "speed": {
+                **_PARAMETER_TEXTS["speed"],
+                "test_ids": [34, 39, 41, 45, 50],
+                "foil_ids": [32, 37, 43, 47, 53],
+            },
+        },
+    },
+    "v2": {
+        "mode": "explicit_pairs",
+        "parameters": {
+            "synch": {
+                **_PARAMETER_TEXTS["synch"],
+                "pairs": V2_SYNCH_PAIRS,
+                "practice_pairs": V2_FIXED_PRACTICE_PAIRS["synch"],
+            },
+            "speed": {
+                **_PARAMETER_TEXTS["speed"],
+                "pairs": V2_SPEED_PAIRS,
+                "practice_pairs": V2_FIXED_PRACTICE_PAIRS["speed"],
+            },
+        },
+    },
+}
+
+# Alias default version for backward compatibility
+PARAMETERS = PAIR_VERSIONS[DEFAULT_PAIR_VERSION]["parameters"]
+
 CHOICE_LABELS = {1: "le PREMIER", 2: "le DEUXIÈME"}
 
 ITI_MS = 500                     # fixation before each trial
 CUE_MS = 500                     # "1" / "2" cue before each clip
 ISI_MS = 1000                    # pause between the two clips
 
-CANVAS = (1280, 720)             # render size; set to (1920, 1080) if your clips are 1080p and playback is smooth
+CANVAS = (1280, 720)             # render size
 QUEUE_FRAMES = 60                # decode-ahead buffer (frames)
 PREBUFFER_FRAMES = 15            # frames to have ready before playback starts
 
-MIXER_FREQ = 44100               # set to your files' sample rate (e.g. 48000) to avoid conversion
-MIXER_BUFFER = 512               # smaller = lower audio latency
+MIXER_FREQ = 44100               # sample rate
+MIXER_BUFFER = 512               # buffer size
 
-RESULT_COLUMNS = ["participant", "age", "sex", "level", "parameter", "block", "phase",
-                  "first", "second", "pair", "response", "chosen", "status",
+RESULT_COLUMNS = ["participant", "age", "sex", "level", "parameter", "pair_version",
+                  "block", "phase", "first", "second", "pair", "response", "chosen", "status",
                   "block_order_pos", "trial_in_block", "trial_global",
                   "rt_after_playback_s", "timestamp",
                   "first_id", "second_id", "test_id", "foil_id", "chosen_id", "chosen_role"]
-DESIGN_COLUMNS = ["participant", "age", "sex", "level", "parameter", "block_order_pos", "block",
-                  "phase", "trial_in_block", "first", "second",
+DESIGN_COLUMNS = ["participant", "age", "sex", "level", "parameter", "pair_version",
+                  "block_order_pos", "block", "phase", "trial_in_block", "first", "second",
                   "first_id", "second_id", "test_id", "foil_id"]
-# ------------------------------------------------
 
-for _name, _cfg in PARAMETERS.items():
-    _both = set(_cfg["test_ids"]) & set(_cfg["foil_ids"])
-    if _both:
-        raise ValueError(f"PARAMETERS['{_name}']: ids in both test and foil sets: {sorted(_both)}")
+# Validate configuration structures on import
+for _vname, _vcfg in PAIR_VERSIONS.items():
+    for _pname, _pcfg in _vcfg["parameters"].items():
+        if _vcfg["mode"] == "grid":
+            _both = set(_pcfg["test_ids"]) & set(_pcfg["foil_ids"])
+            if _both:
+                raise ValueError(f"PAIR_VERSIONS['{_vname}']['{_pname}']: ids in both test and foil sets: {sorted(_both)}")
+        elif _vcfg["mode"] == "explicit_pairs":
+            _test_set = {frozenset((a, b)) for a, b in _pcfg["pairs"]}
+            for a, b in _pcfg["pairs"]:
+                if a == b:
+                    raise ValueError(f"PAIR_VERSIONS['{_vname}']['{_pname}']: identical stimuli in pair ({a}, {b})")
+            for a, b in _pcfg.get("practice_pairs", []):
+                if a == b:
+                    raise ValueError(f"PAIR_VERSIONS['{_vname}']['{_pname}']: identical stimuli in practice pair ({a}, {b})")
+                if frozenset((a, b)) in _test_set:
+                    raise ValueError(
+                        f"PAIR_VERSIONS['{_vname}']['{_pname}']: practice pair ({a}, {b}) overlaps with a test pair"
+                    )
 
-Item = namedtuple("Item", "id role path")      # role: "test" or "foil"
+Item = namedtuple("Item", "id role path")      # role: "test", "foil", "experimental", or "practice"
 
 
 class Abort(Exception):
@@ -120,18 +242,16 @@ class Abort(Exception):
 
 # ---------- stimuli and trial lists ----------
 def find_media(folder, ext, prefix, suffix, ids):
-    """Return {id: path} for the files <prefix>_<id><suffix><ext> (case-insensitive) with id in ids.
-    Files with any other number or suffix are ignored. Exits with a clear message if the
-    folder is missing, a file is missing, or two files match the same number."""
     if not folder.is_dir():
         raise SystemExit(f"Folder not found: {folder}")
+    ids_set = set(ids)
     pat = re.compile(rf"^{re.escape(prefix)}_(\d+){re.escape(suffix)}$", re.IGNORECASE)
     found = {}
     for p in sorted(folder.iterdir()):
         if p.suffix.lower() != ext:
             continue
         m = pat.match(p.stem)
-        if not m or int(m.group(1)) not in ids:
+        if not m or int(m.group(1)) not in ids_set:
             continue
         sid = int(m.group(1))
         if sid in found:
@@ -149,8 +269,7 @@ def _same_pair(t1, t2):
 
 
 def build_test_trials(test_items, foil_items, rng):
-    """Every test item against every foil item, in both orders (AB and BA), shuffled.
-    The two orders of the same pair never occur back to back."""
+    """v1: Every test item against every foil item in both orders (AB and BA)."""
     trials = []
     for t in test_items:
         for f in foil_items:
@@ -163,10 +282,23 @@ def build_test_trials(test_items, foil_items, rng):
     return trials
 
 
+def build_explicit_test_trials(pair_tuples, items_by_id, rng):
+    """v2: Build both orders (AB and BA) for explicit pairs without test/foil classification."""
+    trials = []
+    for a_id, b_id in pair_tuples:
+        a = items_by_id[a_id]
+        b = items_by_id[b_id]
+        trials.append((a, b))
+        trials.append((b, a))
+    for _ in range(2000):
+        rng.shuffle(trials)
+        if all(not _same_pair(trials[i], trials[i + 1]) for i in range(len(trials) - 1)):
+            break
+    return trials
+
+
 def build_practice_trials(foil_items, rng):
-    """Practice uses foil items only. All pairs in both orders: first every pair once (random
-    order AB or BA), then the same pairs reversed. A participant who skips ahead early has
-    therefore seen different pairs rather than repeats."""
+    """v1: Practice combinations using foil items only."""
     pairs = list(combinations(foil_items, 2))
     rng.shuffle(pairs)
     first = [(a, b) if rng.random() < 0.5 else (b, a) for a, b in pairs]
@@ -178,9 +310,15 @@ def build_practice_trials(foil_items, rng):
     return first + second
 
 
+def build_fixed_practice_trials(practice_pairs, items_by_id):
+    """v2: Fixed practice trials across all participants."""
+    return [(items_by_id[a_id], items_by_id[b_id]) for a_id, b_id in practice_pairs]
+
+
 def test_foil_ids(first, second):
-    """(test_id, foil_id) of a test trial; ('', '') for practice pairs (foil vs foil)."""
-    if first.role == second.role:
+    """Return (test_id, foil_id) for v1 grid trials; ('', '') for v2 or practice pairs."""
+    roles = {first.role, second.role}
+    if roles != {"test", "foil"}:
         return "", ""
     test, foil = (first, second) if first.role == "test" else (second, first)
     return test.id, foil.id
@@ -208,7 +346,6 @@ def wav_is_usable_directly(path):
 
 
 def frame_reader(proc, frame_bytes, q, stop, done):
-    """Background thread: read raw frames from ffmpeg into a bounded queue."""
     try:
         while not stop.is_set():
             d = proc.stdout.read(frame_bytes)
@@ -225,37 +362,47 @@ def frame_reader(proc, frame_bytes, q, stop, done):
 
 
 class BaseExperiment:
-    """Subclasses define: results_dir, block_names(parameter) and locate(name)."""
     results_dir = None
 
     @classmethod
     def block_names(cls, parameter):
-        """Names of the blocks for this parameter."""
         raise NotImplementedError
 
     def locate(self, name):
-        """Return (mode, {id: path}) for a block; mode is 'audio', 'video' or 'both'."""
         raise NotImplementedError
 
-    def __init__(self, participant, age, sex, level, parameter, seed=None, start_block=None):
+    def __init__(self, participant, age, sex, level, parameter, seed=None, start_block=None,
+                 pair_version=DEFAULT_PAIR_VERSION):
         self.ffmpeg = find_ffmpeg()
         if not self.ffmpeg:
             raise SystemExit("ffmpeg not found. Run: pip install imageio-ffmpeg "
                              "(or place ffmpeg in a 'bin' folder next to the app).")
+
+        if pair_version not in PAIR_VERSIONS:
+            raise ValueError(f"Unknown pair_version '{pair_version}'. Expected one of: {sorted(PAIR_VERSIONS)}")
 
         self.participant = participant
         self.age = age
         self.sex = sex
         self.level = level
         self.parameter = parameter
-        self.cfg = PARAMETERS[parameter]
-        self.all_ids = self.cfg["test_ids"] + self.cfg["foil_ids"]
+        self.pair_version = pair_version
+        self.version_cfg = PAIR_VERSIONS[pair_version]
+        self.cfg = self.version_cfg["parameters"][parameter]
+
+        if self.version_cfg["mode"] == "grid":
+            self.all_ids = list(dict.fromkeys(self.cfg["test_ids"] + self.cfg["foil_ids"]))
+        else:
+            exp_ids = [sid for pair in self.cfg["pairs"] for sid in pair]
+            prac_ids = [sid for pair in self.cfg.get("practice_pairs", []) for sid in pair]
+            self.all_ids = list(dict.fromkeys(exp_ids + prac_ids))
+
         self.rng = random.Random(seed)
         self.start_block = start_block
 
         self.results_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = f"pairwise_{parameter}_{participant}_{stamp}"
+        prefix = f"pairwise_{parameter}_{pair_version}_{participant}_{stamp}"
         self.out_path = self.results_dir / f"{prefix}.csv"
         self.design_path = self.results_dir / f"{prefix}_design.csv"
 
@@ -290,7 +437,7 @@ class BaseExperiment:
     def _make_plan(self):
         names = list(self.block_names(self.parameter))
         self.rng.shuffle(names)
-        if self.start_block:                                   # force this block to come first
+        if self.start_block:
             first = next(n for n in names if n.lower() == self.start_block)
             names.remove(first)
             names.insert(0, first)
@@ -298,12 +445,27 @@ class BaseExperiment:
         plan = []
         for pos, name in enumerate(names, 1):
             mode, found = self.locate(name)
-            test = [Item(i, "test", found[i]) for i in self.cfg["test_ids"]]
-            foil = [Item(i, "foil", found[i]) for i in self.cfg["foil_ids"]]
+            if self.version_cfg["mode"] == "grid":
+                test = [Item(i, "test", found[i]) for i in self.cfg["test_ids"]]
+                foil = [Item(i, "foil", found[i]) for i in self.cfg["foil_ids"]]
+                practice_trials = build_practice_trials(foil, self.rng) if USE_PRACTICE else []
+                test_trials = build_test_trials(test, foil, self.rng)
+            else:
+                exp_ids_set = {sid for pair in self.cfg["pairs"] for sid in pair}
+                items_by_id = {
+                    sid: Item(sid, "experimental" if sid in exp_ids_set else "practice", found[sid])
+                    for sid in found
+                }
+                practice_trials = (
+                    build_fixed_practice_trials(self.cfg.get("practice_pairs", []), items_by_id)
+                    if USE_PRACTICE else []
+                )
+                test_trials = build_explicit_test_trials(self.cfg["pairs"], items_by_id, self.rng)
+
             plan.append({
                 "pos": pos, "name": name, "mode": mode,
-                "practice": build_practice_trials(foil, self.rng) if USE_PRACTICE else [],
-                "trials": build_test_trials(test, foil, self.rng),
+                "practice": practice_trials,
+                "trials": test_trials,
             })
         return plan
 
@@ -315,16 +477,14 @@ class BaseExperiment:
                     test_id, foil_id = test_foil_ids(first, second)
                     append_row_safely(self.design_path, [
                         self.participant, self.age, self.sex, self.level, self.parameter,
-                        b["pos"], b["name"], phase, i, first.path.name, second.path.name,
+                        self.pair_version, b["pos"], b["name"], phase, i,
+                        first.path.name, second.path.name,
                         first.id, second.id, test_id, foil_id])
 
     def show_instructions(self, instructions):
         pages = [instructions] if isinstance(instructions, str) else instructions
         for i, page in enumerate(pages):
-            if i < len(pages) - 1:
-                footer = "Pressez la barre d'espace pour continuer"
-            else:
-                footer = "Pressez la barre d'espace pour commencer"
+            footer = "Pressez la barre d'espace pour continuer" if i < len(pages) - 1 else "Pressez la barre d'espace pour commencer"
             self.wait_space(f"{page}\n\n{footer}")
 
     # ---------- stimulus preparation ----------
@@ -338,7 +498,7 @@ class BaseExperiment:
             raise SystemExit(f"No audio track found in: {path}\n"
                              "Re-export it with audio (needed for the audiovisual block), "
                              "or set ALLOW_MISSING_AUDIO = True to play it silently.")
-        out = Path(self.tmpdir.name) / f"clip_{len(self.sounds)}.wav"   # unique name per clip
+        out = Path(self.tmpdir.name) / f"clip_{len(self.sounds)}.wav"
         res = run_quiet([self.ffmpeg, "-nostdin", "-y", "-loglevel", "error", "-i", str(path), "-vn",
                          "-ac", "2", "-ar", str(MIXER_FREQ), "-acodec", "pcm_s16le", str(out)],
                         capture_output=True, text=True, errors="replace", timeout=120)
@@ -361,8 +521,6 @@ class BaseExperiment:
                 files.update(item.path for item in trial)
             todo += [(block["mode"], f) for f in sorted(files)]
 
-        # prepare_log.txt lists every file as it is prepared: if preparation ever stalls,
-        # the last line shows which file it was working on
         log = self.results_dir / "prepare_log.txt"
         log.write_text("", encoding="utf-8")
         for n, (mode, f) in enumerate(todo, 1):
@@ -435,7 +593,6 @@ class BaseExperiment:
 
     # ---------- playback ----------
     def play_clip(self, file, mode, label=None):
-        """Play one clip. `label` ("1"/"2") is shown during audio-only clips."""
         use_video = mode in ("video", "both")
         use_audio = mode in ("audio", "both") and self.sounds.get(file) is not None
         proc = reader = channel = None
@@ -478,7 +635,6 @@ class BaseExperiment:
                                         (self.H - surf.get_height()) // 2))
             pygame.display.flip()
 
-            # audio and clock start once the first frame is on screen
             if use_audio:
                 channel = pygame.mixer.Channel(0)
                 channel.play(self.sounds[file])
@@ -529,7 +685,6 @@ class BaseExperiment:
             self.clock.tick(120)
 
     def ask_continue_practice(self, done):
-        """After PRACTICE_MIN trials: True = one more practice trial, False = go to the test."""
         self.draw_text(f"{done} essais d'entraînement effectués.\n\n"
                        "Pour faire un autre essai d'entraînement,\nappuyez sur la barre d'espace.\n\n"
                        "Pour passer aux essais expérimentaux,\nappuyez sur Entrée.")
@@ -614,7 +769,7 @@ class BaseExperiment:
         test_id, foil_id = test_foil_ids(first, second)
         append_row_safely(self.out_path, [
             self.participant, self.age, self.sex, self.level, self.parameter,
-            self.block["name"], c["phase"], first.path.name, second.path.name,
+            self.pair_version, self.block["name"], c["phase"], first.path.name, second.path.name,
             pair_label(first, second), response, chosen.path.name if chosen else "", status,
             self.block["pos"], c["trial"], c["global"],
             "" if rt is None else f"{rt:.3f}",
@@ -641,15 +796,17 @@ class BaseExperiment:
 
 
 def main(experiment_cls):
-    """Command-line entry point shared by modality.py and strategy.py."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--participant", required=True)
     ap.add_argument("--age", required=True)
     ap.add_argument("--sex", required=True)
     ap.add_argument("--level", required=True)
-    ap.add_argument("--parameter", required=True, type=str.lower, choices=sorted(PARAMETERS),
+    ap.add_argument("--parameter", required=True, type=str.lower, choices=sorted(_PARAMETER_TEXTS),
                     help="synch = temporal alignment (knee flexion / racket head); "
                          "speed = racket-head speed at impact")
+    ap.add_argument("--pair-version", type=str.lower, default=DEFAULT_PAIR_VERSION,
+                    choices=sorted(PAIR_VERSIONS),
+                    help=f"pair set version (default: {DEFAULT_PAIR_VERSION})")
     ap.add_argument("--start-block", type=str.lower, default=None,
                     help="block to run first (the others stay in random order)")
     ap.add_argument("--seed", type=int, default=None, help="optional, for reproducible order")
@@ -660,4 +817,5 @@ def main(experiment_cls):
         ap.error(f"--start-block for '{args.parameter}' must be one of: {', '.join(valid)}")
 
     experiment_cls(args.participant, args.age, args.sex, args.level,
-                   args.parameter, args.seed, args.start_block).run()
+                   args.parameter, args.seed, args.start_block,
+                   pair_version=args.pair_version).run()

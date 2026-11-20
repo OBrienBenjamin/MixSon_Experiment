@@ -16,7 +16,7 @@ jobs:
         include:
           - { os: windows-latest, name: windows }
           - { os: macos-15-intel, name: mac-intel }
-          - { os: macos-latest,   name: mac-apple-silicon }
+          - { os: macos-latest, name: mac-apple-silicon }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -43,9 +43,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "installer/vc_redist.x64.exe"
+          $ProgressPreference = 'SilentlyContinue'
+          New-Item -ItemType Directory -Force -Path "installer" | Out-Null
+          Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "installer\vc_redist.x64.exe"
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "installer\mixson.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem installer_output

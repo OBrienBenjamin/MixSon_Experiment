@@ -6,8 +6,6 @@ media/
 build/
 dist/
 *.spec
-installer/vc_redist.x64.exe
-installer_output/
 
 # python / OS
 __pycache__/

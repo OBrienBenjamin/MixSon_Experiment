@@ -38,6 +38,7 @@ except ImportError:
 # ---------------- configuration ----------------
 HERE = app_dir()
 MEDIA_ROOT = HERE / "media"
+VOLUME_ROOT = MEDIA_ROOT / "Volume"
 
 USE_PRACTICE = True
 PRACTICE_MIN = 5                 # practice trials before the participant may skip to the test
@@ -155,6 +156,18 @@ V2_FIXED_PRACTICE_PAIRS = {
     ],
 }
 
+BEEP_FILE = VOLUME_ROOT / "bip.wav"           
+SLIDER_QUESTION = ("Sur quel sens vous êtes-vous le plus appuyé(e)\n"
+                   "pour effectuer vos jugements ?")
+SLIDER_LEFT = "Audio"
+SLIDER_RIGHT = "Visuel"
+
+V2_PRACTICE_EXTRA_IDS = {
+    "synch": [75],
+    "speed": [32, 34, 53],
+}
+V2_PRACTICE_N = 10               # practice trials drawn per block
+
 PAIR_VERSIONS = {
     "v1": {
         "mode": "grid",
@@ -177,14 +190,14 @@ PAIR_VERSIONS = {
             "synch": {
                 **_PARAMETER_TEXTS["synch"],
                 "pairs": V2_SYNCH_PAIRS,
-                "practice_pairs": V2_FIXED_PRACTICE_PAIRS["synch"],
+                "practice_extra_ids": V2_PRACTICE_EXTRA_IDS["synch"],
             },
             "speed": {
                 **_PARAMETER_TEXTS["speed"],
                 "pairs": V2_SPEED_PAIRS,
-                "practice_pairs": V2_FIXED_PRACTICE_PAIRS["speed"],
+                "practice_extra_ids": V2_PRACTICE_EXTRA_IDS["speed"],
             },
-        },
+         },
     },
 }
 
@@ -221,17 +234,9 @@ for _vname, _vcfg in PAIR_VERSIONS.items():
             if _both:
                 raise ValueError(f"PAIR_VERSIONS['{_vname}']['{_pname}']: ids in both test and foil sets: {sorted(_both)}")
         elif _vcfg["mode"] == "explicit_pairs":
-            _test_set = {frozenset((a, b)) for a, b in _pcfg["pairs"]}
             for a, b in _pcfg["pairs"]:
                 if a == b:
                     raise ValueError(f"PAIR_VERSIONS['{_vname}']['{_pname}']: identical stimuli in pair ({a}, {b})")
-            for a, b in _pcfg.get("practice_pairs", []):
-                if a == b:
-                    raise ValueError(f"PAIR_VERSIONS['{_vname}']['{_pname}']: identical stimuli in practice pair ({a}, {b})")
-                if frozenset((a, b)) in _test_set:
-                    raise ValueError(
-                        f"PAIR_VERSIONS['{_vname}']['{_pname}']: practice pair ({a}, {b}) overlaps with a test pair"
-                    )
 
 Item = namedtuple("Item", "id role path")      # role: "test", "foil", "experimental", or "practice"
 
@@ -310,9 +315,24 @@ def build_practice_trials(foil_items, rng):
     return first + second
 
 
-def build_fixed_practice_trials(practice_pairs, items_by_id):
-    """v2: Fixed practice trials across all participants."""
-    return [(items_by_id[a_id], items_by_id[b_id]) for a_id, b_id in practice_pairs]
+def build_random_practice_trials(all_ids, test_pairs, extra_ids, n, items_by_id, rng):
+    """v2: every unordered pair of known stimuli that is not a test pair.
+    Pairs containing a practice-only stimulus come first. Random AB/BA order."""
+    test_set = {frozenset(p) for p in test_pairs}
+    extra = set(extra_ids)
+    pool = [frozenset(c) for c in combinations(sorted(all_ids), 2) if frozenset(c) not in test_set]
+    preferred = [p for p in pool if p & extra]
+    others = [p for p in pool if not (p & extra)]
+    rng.shuffle(preferred)
+    rng.shuffle(others)
+    chosen = (preferred + others)[:n]
+    rng.shuffle(chosen)
+    trials = []
+    for p in chosen:
+        a, b = sorted(p)
+        trials.append((items_by_id[a], items_by_id[b]) if rng.random() < 0.5
+                      else (items_by_id[b], items_by_id[a]))
+    return trials
 
 
 def test_foil_ids(first, second):
@@ -378,6 +398,11 @@ class BaseExperiment:
             raise SystemExit("ffmpeg not found. Run: pip install imageio-ffmpeg "
                              "(or place ffmpeg in a 'bin' folder next to the app).")
 
+        self.beep_path = next((p for p in (MEDIA_ROOT / VOLUME_ROOT / BEEP_FILE, HERE / BEEP_FILE) if p.is_file()), None)
+        if self.beep_path is None:
+            raise SystemExit(f"Sound file not found: {BEEP_FILE}\n"
+                             f"Put it in: {MEDIA_ROOT}")
+
         if pair_version not in PAIR_VERSIONS:
             raise ValueError(f"Unknown pair_version '{pair_version}'. Expected one of: {sorted(PAIR_VERSIONS)}")
 
@@ -394,8 +419,7 @@ class BaseExperiment:
             self.all_ids = list(dict.fromkeys(self.cfg["test_ids"] + self.cfg["foil_ids"]))
         else:
             exp_ids = [sid for pair in self.cfg["pairs"] for sid in pair]
-            prac_ids = [sid for pair in self.cfg.get("practice_pairs", []) for sid in pair]
-            self.all_ids = list(dict.fromkeys(exp_ids + prac_ids))
+            self.all_ids = list(dict.fromkeys(exp_ids + list(self.cfg.get("practice_extra_ids", []))))
 
         self.rng = random.Random(seed)
         self.start_block = start_block
@@ -405,6 +429,7 @@ class BaseExperiment:
         prefix = f"pairwise_{parameter}_{pair_version}_{participant}_{stamp}"
         self.out_path = self.results_dir / f"{prefix}.csv"
         self.design_path = self.results_dir / f"{prefix}_design.csv"
+        self.sense_path = self.results_dir / f"{prefix}_sense.csv"
 
         self.plan = self._make_plan()
         self._write_design()
@@ -436,15 +461,26 @@ class BaseExperiment:
     # ---------- planning ----------
     def _make_plan(self):
         names = list(self.block_names(self.parameter))
-        self.rng.shuffle(names)
+        located = {n: self.locate(n) for n in names}
+
+        # Audiovisual ("both") goes last when other block types exist (Modality).
+        # If every block is audiovisual (Strategy), all blocks are shuffled as before.
+        av = [n for n in names if located[n][0] == "both"]
+        others = [n for n in names if n not in av]
+        pool = others if others else av
+
+        self.rng.shuffle(pool)
         if self.start_block:
-            first = next(n for n in names if n.lower() == self.start_block)
-            names.remove(first)
-            names.insert(0, first)
+            if others and self.start_block in [n.lower() for n in av]:
+                raise SystemExit("--start-block cannot be the audiovisual block: it is always last.")
+            first = next(n for n in pool if n.lower() == self.start_block)
+            pool.remove(first)
+            pool.insert(0, first)
+        names = pool + av if others else pool
 
         plan = []
         for pos, name in enumerate(names, 1):
-            mode, found = self.locate(name)
+            mode, found = located[name]
             if self.version_cfg["mode"] == "grid":
                 test = [Item(i, "test", found[i]) for i in self.cfg["test_ids"]]
                 foil = [Item(i, "foil", found[i]) for i in self.cfg["foil_ids"]]
@@ -457,16 +493,15 @@ class BaseExperiment:
                     for sid in found
                 }
                 practice_trials = (
-                    build_fixed_practice_trials(self.cfg.get("practice_pairs", []), items_by_id)
+                    build_random_practice_trials(
+                        self.all_ids, self.cfg["pairs"], self.cfg.get("practice_extra_ids", []),
+                        V2_PRACTICE_N, items_by_id, self.rng)
                     if USE_PRACTICE else []
                 )
                 test_trials = build_explicit_test_trials(self.cfg["pairs"], items_by_id, self.rng)
 
-            plan.append({
-                "pos": pos, "name": name, "mode": mode,
-                "practice": practice_trials,
-                "trials": test_trials,
-            })
+            plan.append({"pos": pos, "name": name, "mode": mode,
+                         "practice": practice_trials, "trials": test_trials})
         return plan
 
     def _write_design(self):
@@ -481,11 +516,110 @@ class BaseExperiment:
                         first.path.name, second.path.name,
                         first.id, second.id, test_id, foil_id])
 
+    def show_title_screen(self):
+        if self.beep_path not in self.sounds:
+            self.sounds[self.beep_path] = self._prepare_audio(self.beep_path)
+        beep = self.sounds[self.beep_path]
+        if beep is None:
+            raise SystemExit(f"{BEEP_FILE} has no audio track.")
+
+        self.draw_text("Réglage du volume sonore\n\n"
+                       "Vous allez entendre un bip.\n"
+                       "Ajustez le volume de votre appareil à un niveau confortable.\n\n"
+                       "Barre d'espace : réécouter le bip\n"
+                       "Entrée : continuer")
+        pygame.event.clear()
+        pygame.time.wait(500)
+        beep.play()
+        try:
+            while True:
+                for e in self.pump():
+                    if e.key == pygame.K_SPACE:
+                        beep.stop()
+                        beep.play()
+                    elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        return
+                self.clock.tick(60)
+        finally:
+            beep.stop()
+    
     def show_instructions(self, instructions):
         pages = [instructions] if isinstance(instructions, str) else instructions
         for i, page in enumerate(pages):
             footer = "Pressez la barre d'espace pour continuer" if i < len(pages) - 1 else "Pressez la barre d'espace pour commencer"
             self.wait_space(f"{page}\n\n{footer}")
+
+    def ask_sense_reliance(self):
+        """Final screen: 1-D horizontal slider, Audio (left) to Visual (right).
+        Left/Right arrows move the cursor (Shift = bigger steps), the mouse can also be
+        clicked or dragged; Enter confirms. Returns a value from 0 (audio) to 100 (visual)."""
+        x0, x1 = int(self.W * 0.15), int(self.W * 0.85)
+        y = int(self.H * 0.58)
+        value = 50
+        dragging = False
+        small = pygame.font.SysFont("helveticaneue,helvetica,arial", 32)
+
+        def x_of(v):
+            return x0 + (x1 - x0) * v / 100
+
+        def v_of(x):
+            return int(round(min(max((x - x0) / (x1 - x0), 0), 1) * 100))
+
+        pygame.mouse.set_visible(True)
+        pygame.event.clear()
+        try:
+            while True:
+                for e in pygame.event.get():
+                    if e.type == pygame.QUIT:
+                        raise Abort
+                    if e.type == pygame.KEYDOWN:
+                        if e.key == pygame.K_ESCAPE:
+                            raise Abort
+                        step = 10 if e.mod & pygame.KMOD_SHIFT else 1
+                        if e.key == pygame.K_LEFT:
+                            value = max(0, value - step)
+                        elif e.key == pygame.K_RIGHT:
+                            value = min(100, value + step)
+                        elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                            return value
+                    elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                        if abs(e.pos[1] - y) < 40:
+                            dragging = True
+                            value = v_of(e.pos[0])
+                    elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                        dragging = False
+                    elif e.type == pygame.MOUSEMOTION and dragging:
+                        value = v_of(e.pos[0])
+
+                self.screen.fill((0, 0, 0))
+                lines = SLIDER_QUESTION.split("\n")
+                lh = self.font.get_linesize()
+                for i, ln in enumerate(lines):
+                    s = self.font.render(ln, True, (255, 255, 255))
+                    self.screen.blit(s, ((self.W - s.get_width()) // 2, int(self.H * 0.15) + i * lh))
+                pygame.draw.line(self.screen, (200, 200, 200), (x0, y), (x1, y), 4)
+                for xt in (x0, x1):
+                    pygame.draw.line(self.screen, (200, 200, 200), (xt, y - 15), (xt, y + 15), 4)
+                pygame.draw.circle(self.screen, (90, 170, 255), (int(x_of(value)), y), 16)
+                for text, xt in ((SLIDER_LEFT, x0), (SLIDER_RIGHT, x1)):
+                    s = self.font.render(text, True, (255, 255, 255))
+                    self.screen.blit(s, (xt - s.get_width() // 2, y + 40))
+                hint = small.render("Flèches gauche / droite ou souris pour déplacer le curseur.   "
+                                    "Entrée pour valider.", True, (140, 140, 140))
+                self.screen.blit(hint, ((self.W - hint.get_width()) // 2, int(self.H * 0.88)))
+                pygame.display.flip()
+                self.clock.tick(60)
+        finally:
+            pygame.mouse.set_visible(False)
+
+    def save_sense(self, value):
+        if not self.sense_path.exists():
+            append_row_safely(self.sense_path, ["participant", "age", "sex", "level", "parameter",
+                                                "pair_version", "sense_reliance_0audio_100visual",
+                                                "timestamp"])
+        append_row_safely(self.sense_path, [self.participant, self.age, self.sex, self.level,
+                                            self.parameter, self.pair_version, value,
+                                            datetime.now().isoformat(timespec="seconds")])
 
     # ---------- stimulus preparation ----------
     def _prepare_audio(self, path):
@@ -696,7 +830,7 @@ class BaseExperiment:
                 if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                     return False
             self.clock.tick(60)
-
+    
     # ---------- trial / main flow ----------
     def run_trial(self, trial, phase, idx):
         first, second = trial
@@ -725,6 +859,7 @@ class BaseExperiment:
     def run(self):
         try:
             self.prepare()
+            self.show_title_screen()
             self.show_instructions(self.cfg["instructions"])
             n_blocks = len(self.plan)
             for bi, block in enumerate(self.plan):
@@ -753,7 +888,10 @@ class BaseExperiment:
                 if bi < n_blocks - 1:
                     self.wait_space(f"Le bloc {bi + 1} sur {n_blocks} est terminé.\n\n"
                                     "Faites une petite pause. Appuyez sur la barre d'espace pour continuer.")
+                else:
+                    self.save_sense(self.ask_sense_reliance())
             self.wait_space("L'expérience est terminée. Merci ! Appuyez sur la barre d'espace pour quitter.")
+            
         except Abort:
             pass
         finally:

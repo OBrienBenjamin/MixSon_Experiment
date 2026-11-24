@@ -8,8 +8,13 @@ Supported pair versions:
 - "v1" (legacy): every TEST item is compared with every FOIL item (5 x 5 = 25 pairs),
   each in both orders (AB and BA) -> 50 trials; practice uses foil-only combinations.
 - "v2" (explicit pairs): no test/foil logic. Uses explicit pairs per parameter shown
-  in both orders (AB and BA) -> 50 trials, and fixed practice pairs from excluded stimuli
-  that never overlap with test pairs (shown in a fixed order across participants).
+  in both orders (AB and BA) -> 50 trials, and random practice pairs that never overlap
+  with test pairs.
+
+Test trials are cut into mini-blocks of MINI_BLOCK_SIZE (5) consecutive trials:
+- v1: each mini-block holds 5 different test ids against 5 different foil ids;
+- v2: each mini-block holds 5 different deltas (|value(a) - value(b)|), with as few repeated
+  stimuli as possible. For deltas, synch_6 counts as 0 and synch_240 as 250 (DELTA_ALIAS).
 """
 import argparse
 import csv
@@ -24,7 +29,8 @@ import time
 import wave
 from collections import namedtuple
 from datetime import datetime
-from itertools import combinations
+from functools import lru_cache
+from itertools import combinations, permutations
 from pathlib import Path
 
 from appdir import (app_dir, find_ffmpeg, probe_video, has_audio_stream,
@@ -39,6 +45,12 @@ except ImportError:
 HERE = app_dir()
 MEDIA_ROOT = HERE / "media"
 VOLUME_ROOT = MEDIA_ROOT / "Volume"
+
+MINI_BLOCK_SIZE = 5              # test trials per mini-block (see "trial ordering" below)
+
+# Nominal value of a stimulus, used ONLY to compute deltas (never to find files).
+# synch_6 counts as 0, synch_240 counts as 250.
+DELTA_ALIAS = {"synch": {6: 0, 240: 250}, "speed": {}}
 
 USE_PRACTICE = True
 PRACTICE_MIN = 5                 # practice trials before the participant may skip to the test
@@ -201,6 +213,10 @@ PAIR_VERSIONS = {
     },
 }
 
+for _vcfg in PAIR_VERSIONS.values():
+    for _pname, _pcfg in _vcfg["parameters"].items():
+        _pcfg["delta_alias"] = DELTA_ALIAS.get(_pname, {})
+
 # Alias default version for backward compatibility
 PARAMETERS = PAIR_VERSIONS[DEFAULT_PAIR_VERSION]["parameters"]
 
@@ -221,10 +237,11 @@ RESULT_COLUMNS = ["participant", "age", "sex", "level", "parameter", "pair_versi
                   "block", "phase", "first", "second", "pair", "response", "chosen", "status",
                   "block_order_pos", "trial_in_block", "trial_global",
                   "rt_after_playback_s", "timestamp",
-                  "first_id", "second_id", "test_id", "foil_id", "chosen_id", "chosen_role"]
+                  "first_id", "second_id", "test_id", "foil_id", "chosen_id", "chosen_role",
+                  "mini_block", "delta"]
 DESIGN_COLUMNS = ["participant", "age", "sex", "level", "parameter", "pair_version",
                   "block_order_pos", "block", "phase", "trial_in_block", "first", "second",
-                  "first_id", "second_id", "test_id", "foil_id"]
+                  "first_id", "second_id", "test_id", "foil_id", "mini_block", "delta"]
 
 # Validate configuration structures on import
 for _vname, _vcfg in PAIR_VERSIONS.items():
@@ -300,6 +317,150 @@ def build_explicit_test_trials(pair_tuples, items_by_id, rng):
         if all(not _same_pair(trials[i], trials[i + 1]) for i in range(len(trials) - 1)):
             break
     return trials
+
+
+# ---------- trial ordering: mini-blocks of MINI_BLOCK_SIZE trials ----------
+# v1 (grid): every mini-block = 5 different test ids x 5 different foil ids (hard rule). The 25 test/foil
+#   pairs are split into 5 "rows" (a Latin square), each row shown twice (AB, then BA) = 10 mini-blocks.
+#   Of the 1344 possible splits, only those with the fewest repeated deltas per mini-block are used
+#   (soft rule); one of them is drawn at random per block.
+# v2 (explicit pairs): pairs are ranked by delta and cut into 5 delta levels; every mini-block holds one
+#   trial of each level (5 different deltas). Trials are assigned to mini-blocks to minimise repeated
+#   stimuli within a mini-block (a random-restart local search).
+# Everything else stays random: order of mini-blocks, order inside a mini-block, AB/BA orientation.
+def _delta(a, b, alias):
+    return abs(alias.get(a, a) - alias.get(b, b))
+
+
+def _same_ids(t1, t2):
+    return {t1[0], t1[1]} == {t2[0], t2[1]}
+
+
+def _shuffle_inside(block, prev_last, rng, tries=200):
+    """Shuffle a mini-block so that its first trial is not the same pair as the previous trial."""
+    block = list(block)
+    for _ in range(tries):
+        rng.shuffle(block)
+        if prev_last is None or not _same_ids(prev_last, block[0]):
+            break
+    return block
+
+
+@lru_cache(maxsize=None)
+def _decompositions(n):
+    """All splits of the n x n test/foil grid into n perfect matchings (unordered): sets of n permutations
+    that never agree at any position (= Latin squares). 1344 splits for n = 5."""
+    perms = list(permutations(range(n)))
+    compat = [{j for j, q in enumerate(perms) if all(p[i] != q[i] for i in range(n))} for p in perms]
+    out = []
+
+    def rec(chosen, cand):
+        if len(chosen) == n:
+            out.append(tuple(perms[j] for j in chosen))
+            return
+        for j in sorted(cand):
+            rec(chosen + [j], {k for k in cand if k > j and k in compat[j]})
+
+    for i in range(len(perms)):
+        rec([i], {k for k in compat[i] if k > i})
+    return out
+
+
+def order_trials_grid(test_ids, foil_ids, rng, block_size=MINI_BLOCK_SIZE, alias=None, slack=0):
+    """v1. slack = extra repeated deltas tolerated beyond the best split (0 = best splits only)."""
+    alias = alias or {}
+    n = block_size
+    if not (len(test_ids) == len(foil_ids) == n):
+        raise ValueError(f"v1 ordering needs {n} test ids and {n} foil ids "
+                         f"(got {len(test_ids)} and {len(foil_ids)})")
+    T, F = list(test_ids), list(foil_ids)
+
+    def cost(split):
+        return sum(n - len({_delta(T[i], F[p[i]], alias) for i in range(n)}) for p in split)
+
+    splits = _decompositions(n)
+    costs = [cost(sp) for sp in splits]
+    split = rng.choice([sp for sp, c in zip(splits, costs) if c <= min(costs) + slack])
+
+    blocks = []                                   # (row, trials)
+    for r, p in enumerate(split):
+        ab = [(T[i], F[p[i]]) if rng.random() < 0.5 else (F[p[i]], T[i]) for i in range(n)]
+        blocks.append((r, ab))
+        blocks.append((r, [(b, a) for a, b in ab]))
+    for _ in range(5000):                         # the two copies of a row are never back to back
+        rng.shuffle(blocks)
+        if all(blocks[i][0] != blocks[i + 1][0] for i in range(len(blocks) - 1)):
+            break
+    trials, prev = [], None
+    for _, blk in blocks:
+        blk = _shuffle_inside(blk, prev, rng)
+        trials += blk
+        prev = blk[-1]
+    return trials
+
+
+def delta_levels(pairs, block_size=MINI_BLOCK_SIZE, alias=None):
+    """Pair indices of each delta level (level 1 = smallest delta)."""
+    alias = alias or {}
+    n = len(pairs)
+    if n % block_size:
+        raise ValueError(f"v2 ordering needs a number of pairs divisible by {block_size} (got {n})")
+    per_level = n // block_size
+    ranked = sorted(range(n), key=lambda k: (_delta(pairs[k][0], pairs[k][1], alias), k))
+    return [ranked[i * per_level:(i + 1) * per_level] for i in range(block_size)]
+
+
+def _block_cost(trials):
+    counts = {}
+    for a, b in trials:
+        counts[a] = counts.get(a, 0) + 1
+        counts[b] = counts.get(b, 0) + 1
+    return sum(v * (v - 1) // 2 for v in counts.values())
+
+
+def order_trials_pairs(pairs, rng, block_size=MINI_BLOCK_SIZE, alias=None, restarts=40, iters=3000):
+    """v2."""
+    levels = []
+    for idx in delta_levels(pairs, block_size, alias):
+        tr = []
+        for k in idx:
+            a, b = pairs[k]
+            tr += [(a, b), (b, a)]
+        levels.append(tr)
+    n_blocks = len(levels[0])                     # 2 x pairs per level
+    best_grid, best_cost = None, None
+    for _ in range(restarts):
+        grid = [rng.sample(tr, len(tr)) for tr in levels]          # grid[level][block]
+        cost = [_block_cost([grid[l][b] for l in range(block_size)]) for b in range(n_blocks)]
+        for _ in range(iters):
+            l = rng.randrange(block_size)
+            b1, b2 = rng.sample(range(n_blocks), 2)
+            old = cost[b1] + cost[b2]
+            grid[l][b1], grid[l][b2] = grid[l][b2], grid[l][b1]
+            c1 = _block_cost([grid[x][b1] for x in range(block_size)])
+            c2 = _block_cost([grid[x][b2] for x in range(block_size)])
+            if c1 + c2 <= old:
+                cost[b1], cost[b2] = c1, c2
+            else:
+                grid[l][b1], grid[l][b2] = grid[l][b2], grid[l][b1]
+        if best_cost is None or sum(cost) < best_cost:
+            best_grid, best_cost = [row[:] for row in grid], sum(cost)
+    blocks = [[best_grid[l][b] for l in range(block_size)] for b in range(n_blocks)]
+    rng.shuffle(blocks)
+    trials, prev = [], None
+    for blk in blocks:
+        blk = _shuffle_inside(blk, prev, rng)
+        trials += blk
+        prev = blk[-1]
+    return trials
+
+
+def order_trials(mode, cfg, rng, block_size=MINI_BLOCK_SIZE):
+    """Test trials of one block as (first_id, second_id), in presentation order."""
+    alias = cfg.get("delta_alias", {})
+    if mode == "grid":
+        return order_trials_grid(cfg["test_ids"], cfg["foil_ids"], rng, block_size, alias)
+    return order_trials_pairs(cfg["pairs"], rng, block_size, alias)
 
 
 def build_practice_trials(foil_items, rng):
@@ -485,7 +646,9 @@ class BaseExperiment:
                 test = [Item(i, "test", found[i]) for i in self.cfg["test_ids"]]
                 foil = [Item(i, "foil", found[i]) for i in self.cfg["foil_ids"]]
                 practice_trials = build_practice_trials(foil, self.rng) if USE_PRACTICE else []
-                test_trials = build_test_trials(test, foil, self.rng)
+                by_id = {it.id: it for it in test + foil}
+                test_trials = [(by_id[a], by_id[b])
+                               for a, b in order_trials("grid", self.cfg, self.rng)]
             else:
                 exp_ids_set = {sid for pair in self.cfg["pairs"] for sid in pair}
                 items_by_id = {
@@ -498,7 +661,8 @@ class BaseExperiment:
                         V2_PRACTICE_N, items_by_id, self.rng)
                     if USE_PRACTICE else []
                 )
-                test_trials = build_explicit_test_trials(self.cfg["pairs"], items_by_id, self.rng)
+                test_trials = [(items_by_id[a], items_by_id[b])
+                               for a, b in order_trials("explicit_pairs", self.cfg, self.rng)]
 
             plan.append({"pos": pos, "name": name, "mode": mode,
                          "practice": practice_trials, "trials": test_trials})
@@ -514,7 +678,14 @@ class BaseExperiment:
                         self.participant, self.age, self.sex, self.level, self.parameter,
                         self.pair_version, b["pos"], b["name"], phase, i,
                         first.path.name, second.path.name,
-                        first.id, second.id, test_id, foil_id])
+                        first.id, second.id, test_id, foil_id,
+                        self._mini_block(phase, i), self._delta(first, second)])
+
+    def _mini_block(self, phase, trial_in_block):
+        return (trial_in_block - 1) // MINI_BLOCK_SIZE + 1 if phase == "test" else ""
+
+    def _delta(self, first, second):
+        return _delta(first.id, second.id, self.cfg.get("delta_alias", {}))
 
     def show_title_screen(self):
         if self.beep_path not in self.sounds:
@@ -913,7 +1084,8 @@ class BaseExperiment:
             "" if rt is None else f"{rt:.3f}",
             datetime.now().isoformat(timespec="seconds"),
             first.id, second.id, test_id, foil_id,
-            chosen.id if chosen else "", chosen.role if chosen else ""])
+            chosen.id if chosen else "", chosen.role if chosen else "",
+            self._mini_block(c["phase"], c["trial"]), self._delta(first, second)])
 
     def shutdown(self):
         try:
